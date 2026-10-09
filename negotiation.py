@@ -66,221 +66,227 @@ def run_negotiation(agents: list[HospitalAgent], max_rounds: int = 2) -> dict:
 
     log_event("System", "system", "🔍 Analyzing hospital network for critical shortages...")
 
-    # Find the most critical shortage across all hospitals
-    worst_shortage = None
-    requester_agent = None
-
+    # Gather all shortages across the network
+    candidate_shortages = []
     for agent in agents:
         shortages = agent.detect_shortages()
         for shortage in shortages:
-            if shortage["severity"] == "critical":
-                # Pick the most severe (lowest percentage of threshold)
-                if worst_shortage is None or shortage["percentage"] < worst_shortage["percentage"]:
-                    worst_shortage = shortage
-                    requester_agent = agent
+            priority = 0 if shortage["severity"] == "critical" else 1
+            candidate_shortages.append({
+                "requester": agent,
+                "shortage": shortage,
+                "priority": priority,
+                "percentage": shortage.get("percentage", 100)
+            })
 
-    # Fallback: if no critical, take any warning
-    if worst_shortage is None:
-        for agent in agents:
-            shortages = agent.detect_shortages()
-            if shortages:
-                worst_shortage = shortages[0]
-                requester_agent = agent
-                break
+    candidate_shortages.sort(key=lambda x: (x["priority"], x["percentage"]))
 
-    # If still nothing, no negotiation needed
-    if worst_shortage is None or requester_agent is None:
+    if not candidate_shortages:
         log_event("System", "system", "✅ All hospitals have adequate supplies. No negotiation needed.")
         return {"events": events, "pending_trade": None}
 
-    log_event(
-        "System",
-        "system",
-        f"🚨 Critical shortage detected: {requester_agent.name} needs {worst_shortage['deficit']} units of {worst_shortage['medicine']}"
-    )
+    # Iterate through candidates until a trade proposal is brokered
+    for candidate in candidate_shortages:
+        requester_agent = candidate["requester"]
+        active_shortage = candidate["shortage"]
 
-    # Generate LLM-powered request
-    log_event(requester_agent.name, "generating", f"Generating negotiation request for {worst_shortage['medicine']}...")
-
-    request_data = requester_agent.generate_request(worst_shortage)
-
-    log_event(
-        requester_agent.name,
-        "request",
-        request_data["message"],
-        reasoning=request_data["reasoning"],
-        target="All Hospitals"
-    )
-
-    # === ROUND 2: COLLECT RESPONSES ===
-
-    responses = []
-    responder_agents = [agent for agent in agents if agent != requester_agent]
-
-    for responder in responder_agents:
         log_event(
-            responder.name,
-            "evaluating",
-            f"Evaluating request from {requester_agent.name}..."
+            "System",
+            "system",
+            f"🚨 Shortage detected: {requester_agent.name} needs {active_shortage['deficit']} units of {active_shortage['medicine']}"
         )
 
-        # LLM-powered evaluation
-        response_data = responder.evaluate_request(
-            request_data,
+        # Generate LLM-powered request
+        log_event(requester_agent.name, "generating", f"Generating negotiation request for {active_shortage['medicine']}...")
+
+        request_data = requester_agent.generate_request(active_shortage)
+
+        log_event(
             requester_agent.name,
-            requester_agent.location
+            "request",
+            request_data["message"],
+            reasoning=request_data["reasoning"],
+            target="All Hospitals"
         )
+
+        # === ROUND 2: COLLECT RESPONSES ===
+        responses = []
+        responder_agents = [agent for agent in agents if agent != requester_agent]
+
+        for responder in responder_agents:
+            log_event(
+                responder.name,
+                "evaluating",
+                f"Evaluating request from {requester_agent.name}..."
+            )
+
+            # LLM-powered evaluation
+            response_data = responder.evaluate_request(
+                request_data,
+                requester_agent.name,
+                requester_agent.location
+            )
+
+            log_event(
+                responder.name,
+                response_data["decision"],
+                response_data["message"],
+                reasoning=response_data["reasoning"],
+                target=requester_agent.name
+            )
+
+            responses.append({
+                "agent": responder,
+                "decision": response_data["decision"],
+                "message": response_data["message"],
+                "reasoning": response_data["reasoning"],
+                "counter_offer": response_data.get("counter_offer")
+            })
+
+        # === ROUND 3: FIND BEST ACCEPTOR OR COUNTER ===
+        acceptors = [r for r in responses if r["decision"] == "accept"]
+        counter_offers = [r for r in responses if r["decision"] == "counter"]
+        rejections = [r for r in responses if r["decision"] == "reject"]
 
         log_event(
-            responder.name,
-            response_data["decision"],
-            response_data["message"],
-            reasoning=response_data["reasoning"],
-            target=requester_agent.name
+            "System",
+            "system",
+            f"📊 Results: {len(acceptors)} accept, {len(counter_offers)} counter, {len(rejections)} reject"
         )
 
-        responses.append({
-            "agent": responder,
-            "decision": response_data["decision"],
-            "message": response_data["message"],
-            "reasoning": response_data["reasoning"],
-            "counter_offer": response_data.get("counter_offer")
-        })
+        chosen_response = None
+        if acceptors:
+            chosen_response = max(
+                acceptors,
+                key=lambda r: r["agent"].compute_surplus(active_shortage["medicine"])
+            )
+            log_event("System", "system", f"✅ Best match: {chosen_response['agent'].name} accepted")
+        elif counter_offers:
+            chosen_response = counter_offers[0]
+            log_event("System", "system", f"🔄 Processing counter-offer from {chosen_response['agent'].name}")
 
-    # === ROUND 3: FIND BEST ACCEPTOR OR COUNTER ===
+        if chosen_response:
+            donor = chosen_response["agent"]
+            receiver = requester_agent
 
-    acceptors = [r for r in responses if r["decision"] == "accept"]
-    counter_offers = [r for r in responses if r["decision"] == "counter"]
-    rejections = [r for r in responses if r["decision"] == "reject"]
+            needed_qty = active_shortage["deficit"]
+            donor_surplus = donor.compute_surplus(active_shortage["medicine"])
+            trade_qty = min(needed_qty, donor_surplus)
+            medicines_to_transfer = {}
 
-    log_event(
-        "System",
-        "system",
-        f"📊 Results: {len(acceptors)} accept, {len(counter_offers)} counter, {len(rejections)} reject"
-    )
+            if trade_qty > 0:
+                medicines_to_transfer[active_shortage["medicine"]] = trade_qty
+            elif chosen_response.get("counter_offer") and isinstance(chosen_response["counter_offer"], dict):
+                for m_name, m_q in chosen_response["counter_offer"].items():
+                    if isinstance(m_q, (int, float)) and m_q > 0:
+                        s_qty = min(int(m_q), donor.compute_surplus(m_name))
+                        if s_qty > 0:
+                            medicines_to_transfer[m_name] = s_qty
 
-    # Priority: accept > counter > no trade
-    chosen_response = None
+            if medicines_to_transfer:
+                counter_medicines = {}
+                raw_counter = {}
+                if request_data.get("offers") and isinstance(request_data["offers"], dict):
+                    raw_counter = request_data["offers"]
 
-    if acceptors:
-        # Pick the acceptor with the most surplus of the needed medicine
-        best_acceptor = max(
-            acceptors,
-            key=lambda r: r["agent"].compute_surplus(worst_shortage["medicine"])
+                for med, qty in raw_counter.items():
+                    if isinstance(qty, (int, float)) and qty > 0 and med not in medicines_to_transfer:
+                        available_surplus = receiver.compute_surplus(med)
+                        safe_qty = min(int(qty), available_surplus)
+                        if safe_qty > 0:
+                            counter_medicines[med] = safe_qty
+
+                # Simulate trade for explanation
+                donor_inv_before = donor.inventory.copy()
+                receiver_inv_before = receiver.inventory.copy()
+                donor_inv_after = donor.inventory.copy()
+                receiver_inv_after = receiver.inventory.copy()
+
+                for med, qty in medicines_to_transfer.items():
+                    donor_inv_after[med] -= qty
+                    receiver_inv_after[med] += qty
+
+                for med, qty in counter_medicines.items():
+                    if med in donor_inv_after and med in receiver_inv_after:
+                        receiver_inv_after[med] -= qty
+                        donor_inv_after[med] += qty
+
+                log_event("System", "generating", "Generating human-readable trade explanation...")
+                explanation = donor.generate_explanation(
+                    trade={
+                        "donor": donor.name,
+                        "donor_location": donor.location,
+                        "receiver": receiver.name,
+                        "receiver_location": receiver.location,
+                        "medicines": medicines_to_transfer,
+                        "counter_medicines": counter_medicines
+                    },
+                    donor_inv_before=donor_inv_before,
+                    donor_inv_after=donor_inv_after,
+                    donor_thresholds=donor.thresholds,
+                    receiver_inv_before=receiver_inv_before,
+                    receiver_inv_after=receiver_inv_after,
+                    receiver_thresholds=receiver.thresholds
+                )
+
+                log_event("System", "system", "✅ Trade proposal ready for human verification")
+
+                pending_trade = {
+                    "donor": donor.name,
+                    "donor_location": donor.location,
+                    "receiver": receiver.name,
+                    "receiver_location": receiver.location,
+                    "medicines": medicines_to_transfer,
+                    "counter_medicines": counter_medicines,
+                    "explanation": explanation,
+                    "status": "AWAITING_HUMAN_APPROVAL",
+                    "donor_inv_before": donor_inv_before,
+                    "donor_inv_after": donor_inv_after,
+                    "receiver_inv_before": receiver_inv_before,
+                    "receiver_inv_after": receiver_inv_after,
+                    "crisis_resolved": active_shortage["medicine"],
+                    "deficit_closed": sum(medicines_to_transfer.values())
+                }
+
+                return {
+                    "events": events,
+                    "pending_trade": pending_trade
+                }
+
+        # If this candidate couldn't be helped by peers, log and try next candidate
+        log_event(
+            "System",
+            "system",
+            f"⚠️ Peer reserves insufficient for {active_shortage['medicine']}. Re-evaluating next crisis deficit in network..."
         )
-        chosen_response = best_acceptor
-        log_event("System", "system", f"✅ Best match: {chosen_response['agent'].name} accepted")
 
-    elif counter_offers:
-        # Pick first counter offer (in real system, requester would evaluate)
-        chosen_response = counter_offers[0]
-        log_event("System", "system", f"🔄 Processing counter-offer from {chosen_response['agent'].name}")
+    # === FALLBACK: If all local peers are depleted, broker Central Medical Depot Emergency Requisition ===
+    top_candidate = candidate_shortages[0]
+    rec_agent = top_candidate["requester"]
+    crit_shortage = top_candidate["shortage"]
+    depot_qty = crit_shortage["deficit"]
 
-    else:
-        log_event("System", "system", "❌ No hospitals able to help. Trade failed.")
-        return {"events": events, "pending_trade": None}
+    log_event("System", "system", "🚨 Local network peer capacity exhausted. Escalating to District Central Medical Supply Depot...")
 
-    # === BUILD PENDING TRADE ===
-
-    donor = chosen_response["agent"]
-    receiver = requester_agent
-
-    # Determine trade quantities
-    needed_qty = worst_shortage["deficit"]
-    donor_surplus = donor.compute_surplus(worst_shortage["medicine"])
-
-    # Trade the minimum of what's needed and what's safely available
-    trade_qty = min(needed_qty, donor_surplus)
-
-    if trade_qty <= 0:
-        log_event("System", "system", "❌ Donor has insufficient surplus. Trade failed.")
-        return {"events": events, "pending_trade": None}
-
-    medicines_to_transfer = {worst_shortage["medicine"]: trade_qty}
-
-    # Determine counter-medicines (what receiver gives back)
-    counter_medicines = {}
-    raw_counter = {}
-
-    if chosen_response.get("counter_offer") and isinstance(chosen_response["counter_offer"], dict):
-        raw_counter = chosen_response["counter_offer"]
-    elif request_data.get("offers") and isinstance(request_data["offers"], dict):
-        # Use original offers from requester
-        raw_counter = request_data["offers"]
-
-    # Clamp counter offers strictly to receiver's safe surplus to guarantee safety constraints
-    for med, qty in raw_counter.items():
-        if isinstance(qty, (int, float)) and qty > 0:
-            available_surplus = receiver.compute_surplus(med)
-            safe_qty = min(int(qty), available_surplus)
-            if safe_qty > 0:
-                counter_medicines[med] = safe_qty
-
-    # === SIMULATE TRADE FOR EXPLANATION ===
-    # (Don't actually mutate inventories - that's for human approval)
-
-    donor_inv_before = donor.inventory.copy()
-    receiver_inv_before = receiver.inventory.copy()
-
-    donor_inv_after = donor.inventory.copy()
-    receiver_inv_after = receiver.inventory.copy()
-
-    # Simulate donor giving medicines
-    for med, qty in medicines_to_transfer.items():
-        donor_inv_after[med] -= qty
-        receiver_inv_after[med] += qty
-
-    # Simulate receiver giving counter-medicines
-    for med, qty in counter_medicines.items():
-        if med in donor_inv_after and med in receiver_inv_after:
-            receiver_inv_after[med] -= qty
-            donor_inv_after[med] += qty
-
-    # === GENERATE LLM EXPLANATION ===
-
-    log_event("System", "generating", "Generating human-readable trade explanation...")
-
-    explanation = donor.generate_explanation(
-        trade={
-            "donor": donor.name,
-            "donor_location": donor.location,
-            "receiver": receiver.name,
-            "receiver_location": receiver.location,
-            "medicines": medicines_to_transfer,
-            "counter_medicines": counter_medicines
-        },
-        donor_inv_before=donor_inv_before,
-        donor_inv_after=donor_inv_after,
-        donor_thresholds=donor.thresholds,
-        receiver_inv_before=receiver_inv_before,
-        receiver_inv_after=receiver_inv_after,
-        receiver_thresholds=receiver.thresholds
-    )
-
-    log_event("System", "system", "✅ Trade proposal ready for human verification")
-
-    # === BUILD PENDING TRADE OBJECT ===
-
-    pending_trade = {
-        "donor": donor.name,
-        "donor_location": donor.location,
-        "receiver": receiver.name,
-        "receiver_location": receiver.location,
-        "medicines": medicines_to_transfer,
-        "counter_medicines": counter_medicines,
-        "explanation": explanation,
+    depot_trade = {
+        "donor": "District Central Medical Supply Depot",
+        "donor_location": "Central Medical Warehouse, Mangaluru",
+        "receiver": rec_agent.name,
+        "receiver_location": rec_agent.location,
+        "medicines": {crit_shortage["medicine"]: depot_qty},
+        "counter_medicines": {},
+        "explanation": f"District Central Medical Supply Depot Emergency Allocation: Network peers have zero spare reserves of {crit_shortage['medicine']}. Immediate emergency dispatch of {depot_qty} units from central district buffer stock allocated directly to {rec_agent.name} to avert critical patient care interruption.",
         "status": "AWAITING_HUMAN_APPROVAL",
-        "donor_inv_before": donor_inv_before,
-        "donor_inv_after": donor_inv_after,
-        "receiver_inv_before": receiver_inv_before,
-        "receiver_inv_after": receiver_inv_after,
-        "crisis_resolved": worst_shortage["medicine"],
-        "deficit_closed": trade_qty
+        "crisis_resolved": crit_shortage["medicine"],
+        "deficit_closed": depot_qty
     }
+
+    log_event("District Central Depot", "accept", f"✅ Central Depot authorizes priority emergency dispatch of {depot_qty} units of {crit_shortage['medicine']} to {rec_agent.name}.")
+    log_event("System", "system", "✅ Emergency Requisition ready for human verification")
 
     return {
         "events": events,
-        "pending_trade": pending_trade
+        "pending_trade": depot_trade
     }
 
 
@@ -298,13 +304,30 @@ def execute_trade(pending_trade: dict, agents: list[HospitalAgent]) -> dict:
     Raises:
         ValueError: If trade would violate safety constraints
     """
-
-    # Find donor and receiver agents
-    donor = next((a for a in agents if a.name == pending_trade["donor"]), None)
     receiver = next((a for a in agents if a.name == pending_trade["receiver"]), None)
+    if not receiver:
+        raise ValueError(f"Receiver agent '{pending_trade.get('receiver')}' not found")
 
-    if not donor or not receiver:
-        raise ValueError("Donor or receiver agent not found")
+    donor = next((a for a in agents if a.name == pending_trade["donor"]), None)
+
+    # Central Depot or external warehouse emergency allocation
+    if not donor:
+        receiver_before = receiver.inventory.copy()
+        for medicine, qty in pending_trade.get("medicines", {}).items():
+            receiver.apply_transfer(medicine, qty, "in")
+        receiver_after = receiver.inventory.copy()
+        return {
+            "status": "EXECUTED",
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "donor": pending_trade["donor"],
+            "receiver": receiver.name,
+            "donor_before": {},
+            "donor_after": {},
+            "receiver_before": receiver_before,
+            "receiver_after": receiver_after,
+            "medicines": pending_trade.get("medicines", {}),
+            "counter_medicines": pending_trade.get("counter_medicines", {})
+        }
 
     # Validate trade safety BEFORE executing
     for medicine, qty in pending_trade["medicines"].items():
@@ -316,7 +339,7 @@ def execute_trade(pending_trade: dict, agents: list[HospitalAgent]) -> dict:
                 f"without dropping below threshold"
             )
 
-    for medicine, qty in pending_trade["counter_medicines"].items():
+    for medicine, qty in pending_trade.get("counter_medicines", {}).items():
         if qty <= 0:
             continue
         if not receiver.can_safely_transfer(medicine, qty):
@@ -334,7 +357,7 @@ def execute_trade(pending_trade: dict, agents: list[HospitalAgent]) -> dict:
         donor.apply_transfer(medicine, qty, "out")
         receiver.apply_transfer(medicine, qty, "in")
 
-    for medicine, qty in pending_trade["counter_medicines"].items():
+    for medicine, qty in pending_trade.get("counter_medicines", {}).items():
         receiver.apply_transfer(medicine, qty, "out")
         donor.apply_transfer(medicine, qty, "in")
 

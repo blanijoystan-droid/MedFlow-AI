@@ -35,10 +35,20 @@ export default function DemandForecastModal({
   isOpen, 
   onClose, 
   onTriggerRequisition,
-  initialHospital = "City General Hospital",
-  initialMedicine = "Paracetamol"
+  initialHospital,
+  initialMedicine = "Paracetamol",
+  hospitals = []
 }) {
-  const [selectedHospital, setSelectedHospital] = useState(initialHospital);
+  const activeHospitalList = useMemo(() => {
+    if (hospitals && hospitals.length > 0) {
+      return hospitals.map(h => typeof h === 'string' ? h : h.name);
+    }
+    return HOSPITALS;
+  }, [hospitals]);
+
+  const [selectedHospital, setSelectedHospital] = useState(
+    initialHospital || (hospitals[0]?.name || HOSPITALS[0])
+  );
   const [selectedMedicine, setSelectedMedicine] = useState(initialMedicine);
   const [horizon, setHorizon] = useState(14); // 7 or 14
   const [selectedSeason, setSelectedSeason] = useState("Monsoon");
@@ -48,11 +58,18 @@ export default function DemandForecastModal({
   const [loading, setLoading] = useState(false);
   const [hoveredPoint, setHoveredPoint] = useState(null);
 
-  // Sync initial props
+  // Sync initial props and live hospital list
   useEffect(() => {
-    if (initialHospital) setSelectedHospital(initialHospital);
+    if (initialHospital && activeHospitalList.includes(initialHospital)) {
+      setSelectedHospital(initialHospital);
+    } else if (activeHospitalList.length > 0 && !activeHospitalList.includes(selectedHospital)) {
+      setSelectedHospital(activeHospitalList[0]);
+    }
+  }, [initialHospital, activeHospitalList]);
+
+  useEffect(() => {
     if (initialMedicine) setSelectedMedicine(initialMedicine);
-  }, [initialHospital, initialMedicine]);
+  }, [initialMedicine]);
 
   // Load forecast whenever hospital, medicine, horizon, or season changes
   const loadForecast = async () => {
@@ -132,9 +149,17 @@ export default function DemandForecastModal({
               value={selectedHospital}
               onChange={(e) => setSelectedHospital(e.target.value)}
             >
-              {HOSPITALS.map(h => (
-                <option key={h} value={h}>{h}</option>
-              ))}
+              {activeHospitalList.map(hName => {
+                const hospObj = hospitals?.find(x => (x.name || x) === hName);
+                const distLabel = hospObj?.distance_km != null 
+                  ? ` (📍 ${typeof hospObj.distance_km === 'number' ? hospObj.distance_km.toFixed(1) : hospObj.distance_km} km)` 
+                  : '';
+                return (
+                  <option key={hName} value={hName}>
+                    {hName}{distLabel}
+                  </option>
+                );
+              })}
             </select>
           </div>
 

@@ -178,14 +178,16 @@ def fetch_real_osm_hospitals(lat: float, lng: float, radius: int = 15000) -> Lis
             if resp.status_code == 200:
                 items = resp.json()
                 for item in items:
-                    raw_title = item.get("display_name", "").split(",")[0].strip()
+                    parts = item.get("display_name", "").split(",")
+                    raw_title = parts[0].strip()
+                    if raw_title.lower() in ("hospital", "clinic", "health centre", "dispensary") and len(parts) > 1:
+                        raw_title = f"{parts[1].strip()} {raw_title}"
                     if not raw_title or raw_title in seen_names or len(raw_title) < 3:
                         continue
                     seen_names.add(raw_title)
 
                     h_lat = float(item.get("lat"))
                     h_lng = float(item.get("lon"))
-                    parts = item.get("display_name", "").split(",")
                     address_snippet = ", ".join(parts[1:4]).strip() if len(parts) > 2 else "Medical Sector"
                     osm_id = item.get("osm_id")
 

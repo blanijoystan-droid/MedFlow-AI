@@ -15,9 +15,9 @@ export default function PendingTradePanel({ pendingTrade, onApprove, onReject, p
       className="med-card" 
       style={{
         padding: '1.75rem',
-        border: '2px solid rgba(245, 158, 11, 0.65)',
-        background: 'linear-gradient(135deg, var(--amber-50), var(--bg-card))',
-        boxShadow: 'var(--shadow-lg)',
+        border: '2px solid #f59e0b',
+        background: 'linear-gradient(135deg, rgba(245, 158, 11, 0.16), var(--bg-card))',
+        boxShadow: '0 0 35px rgba(245, 158, 11, 0.28), var(--shadow-xl)',
         borderRadius: 'var(--radius-xl)',
         display: 'flex',
         flexDirection: 'column',
@@ -29,29 +29,29 @@ export default function PendingTradePanel({ pendingTrade, onApprove, onReject, p
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.75rem' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
           <div style={{
-            width: '40px',
-            height: '40px',
+            width: '42px',
+            height: '42px',
             borderRadius: '10px',
-            background: 'var(--amber-50)',
-            border: '1px solid var(--amber-100)',
+            background: 'rgba(245, 158, 11, 0.2)',
+            border: '1px solid rgba(245, 158, 11, 0.4)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             flexShrink: 0
           }}>
-            <ShieldAlert size={24} color="var(--amber-600)" />
+            <ShieldAlert size={24} color="#f59e0b" />
           </div>
           <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-              <h2 style={{ fontSize: '1.25rem', fontWeight: '800', color: 'var(--text-primary)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', flexWrap: 'wrap' }}>
+              <h2 style={{ fontSize: '1.3rem', fontWeight: '800', color: 'var(--text-primary)', margin: 0 }}>
                 Human-in-the-Loop Verification Required
               </h2>
-              <span className="badge badge-warning" style={{ fontSize: '0.7rem', padding: '0.2rem 0.6rem' }}>
-                AWAITING AUTHORIZATION
+              <span className="badge badge-warning" style={{ fontSize: '0.75rem', padding: '0.25rem 0.7rem', fontWeight: '700' }}>
+                ⚠️ AWAITING AUTHORIZATION
               </span>
             </div>
-            <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginTop: '0.15rem' }}>
-              Agents have converged on an emergency reallocation proposal. Executive review is mandatory prior to physical dispatch.
+            <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '0.25rem', marginBottom: 0 }}>
+              Autonomous multi-agent negotiation converged on this crisis supply reallocation. Executive clinical verification is required to proceed.
             </p>
           </div>
         </div>
@@ -182,7 +182,7 @@ export default function PendingTradePanel({ pendingTrade, onApprove, onReject, p
             onClick={() => onReject('Declined by medical administrator')}
             disabled={processing}
             id="btn-reject-trade"
-            style={{ padding: '0.75rem 1.35rem' }}
+            style={{ padding: '0.75rem 1.4rem', fontWeight: '700', cursor: processing ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: '0.45rem' }}
           >
             <XCircle size={18} />
             <span>Reject Proposal</span>
@@ -194,10 +194,10 @@ export default function PendingTradePanel({ pendingTrade, onApprove, onReject, p
             onClick={() => onApprove()}
             disabled={processing}
             id="btn-approve-trade"
-            style={{ padding: '0.75rem 1.75rem', fontSize: '0.95rem' }}
+            style={{ padding: '0.75rem 1.85rem', fontSize: '0.95rem', fontWeight: '700', cursor: processing ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: '0.45rem' }}
           >
             <CheckCircle size={18} />
-            <span>Approve & Execute Trade</span>
+            <span>{processing ? 'Authorizing Dispatch...' : 'Approve & Execute Trade'}</span>
           </button>
         </div>
       </div>
