@@ -518,7 +518,8 @@ if __name__ == "__main__":
         except Exception:
             pass
     
-    host = os.getenv("HOST", "127.0.0.1")
+    host = os.getenv("HOST", "0.0.0.0")
     port = int(os.getenv("PORT", "8000"))
+    reload_enabled = os.getenv("RELOAD", "true").lower() in ("true", "1")
     print(f"[*] Starting MedFlow-AI Server on http://{host}:{port}")
-    uvicorn.run("server:app", host=host, port=port, reload=True)
+    uvicorn.run("server:app", host=host, port=port, reload=reload_enabled)
