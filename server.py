@@ -47,12 +47,22 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Modular Map & Medicine Requisition Routers
+# Modular Map, Requisition, Demand Forecasting, Risk, Expiry, Redistribution & Priority Routers
 from backend.routes.medicine_request import router as medicine_request_router
 from backend.routes.nearby_hospitals import router as nearby_hospitals_router
+from backend.routes.forecast import router as forecast_router
+from backend.routes.risk import router as risk_router
+from backend.routes.expiry import router as expiry_router
+from backend.routes.redistribution import router as redistribution_router
+from backend.routes.priority import router as priority_router
 
 app.include_router(medicine_request_router)
 app.include_router(nearby_hospitals_router)
+app.include_router(forecast_router)
+app.include_router(risk_router)
+app.include_router(expiry_router)
+app.include_router(redistribution_router)
+app.include_router(priority_router)
 
 # === CENTRAL IN-MEMORY STATE ===
 from state import state, SystemState
