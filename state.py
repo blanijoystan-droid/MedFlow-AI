@@ -20,6 +20,9 @@ class SystemState:
         self.trade_history: List[Dict[str, Any]] = []
         self.scenario_count: int = 1
         self.medicine_requests: List[Dict[str, Any]] = []
+        self.sarvam_call_logs: List[Dict[str, Any]] = []
+        self.sarvam_message_logs: List[Dict[str, Any]] = []
+        self.sarvam_auto_dispatch: bool = True
 
     def reset_scenario(
         self,

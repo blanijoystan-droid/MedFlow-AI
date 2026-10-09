@@ -347,12 +347,12 @@ def generate_hospitals(
     crisis_medicine = random.choice(MEDICINES)
     crisis_agent = agents[crisis_hospital_idx]
 
-    # Create critical shortage: set inventory to 20-38% of threshold
+    # Create acute critical shortage (<30 units to trigger Sarvam AI Voice Call Agent)
     crisis_threshold = crisis_agent.thresholds[crisis_medicine]
-    crisis_inventory = int(crisis_threshold * random.uniform(0.20, 0.38))
+    crisis_inventory = random.randint(18, 28)
     crisis_agent.inventory[crisis_medicine] = crisis_inventory
 
-    # === STEP 3: Ensure other hospital can help ===
+    # === STEP 3: Ensure other hospital can help with excess surplus ===
     helper_indices = [i for i in range(len(agents)) if i != crisis_hospital_idx]
     if helper_indices:
         helper_idx = random.choice(helper_indices)
@@ -363,14 +363,19 @@ def generate_hospitals(
         helper_inventory = int(helper_threshold * random.uniform(1.6, 2.4))
         helper_agent.inventory[crisis_medicine] = helper_inventory
 
-    # === STEP 4: Add secondary shortage variety ===
-    if random.random() < 0.6:
-        secondary_hospital_idx = random.randint(0, len(agents) - 1)
-        secondary_medicine = random.choice([m for m in MEDICINES if m != crisis_medicine])
-        secondary_agent = agents[secondary_hospital_idx]
-        secondary_threshold = secondary_agent.thresholds[secondary_medicine]
-        secondary_inventory = int(secondary_threshold * random.uniform(0.60, 0.80))
-        secondary_agent.inventory[secondary_medicine] = secondary_inventory
+    # === STEP 4: Add secondary urgent shortage (<50 units to trigger Sarvam AI Message Agent) ===
+    eligible_hospitals = [i for i in range(len(agents))]
+    secondary_hospital_idx = random.choice(eligible_hospitals)
+    secondary_medicine = random.choice([m for m in MEDICINES if m != crisis_medicine])
+    secondary_agent = agents[secondary_hospital_idx]
+    secondary_inventory = random.randint(34, 48)
+    secondary_agent.inventory[secondary_medicine] = secondary_inventory
+
+    # Ensure another peer has surplus of the secondary medicine
+    sec_helper_indices = [i for i in range(len(agents)) if i != secondary_hospital_idx]
+    if sec_helper_indices:
+        sec_helper = agents[random.choice(sec_helper_indices)]
+        sec_helper.inventory[secondary_medicine] = int(sec_helper.thresholds[secondary_medicine] * random.uniform(1.5, 2.0))
 
     # === STEP 5: Validation ===
     total_critical_shortages = sum(
