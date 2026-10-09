@@ -8,6 +8,7 @@ import ReasoningDrawer from './components/ReasoningDrawer';
 import ApiKeyModal from './components/ApiKeyModal';
 import DakshinaKannadaModal from './components/DakshinaKannadaModal';
 import SupplyChainChatbot from './components/SupplyChainChatbot';
+import SarvamCallAgentModal from './components/SarvamCallAgentModal';
 import FindMedicineModal from './components/FindMedicineModal';
 import DemandForecastModal from './components/DemandForecastModal';
 import RiskEngineModal from './components/RiskEngineModal';
@@ -851,6 +852,9 @@ export default function App() {
         onSaveKey={handleSaveKey}
         currentStatus={status}
       />
+
+      {/* Sarvam AI Autonomous Call & Message Dispatch Agent */}
+      <SarvamCallAgentModal hospitals={hospitals} />
 
       {/* Assistant Chatbot */}
       <SupplyChainChatbot />

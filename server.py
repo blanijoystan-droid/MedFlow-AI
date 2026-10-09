@@ -55,6 +55,7 @@ from backend.routes.risk import router as risk_router
 from backend.routes.expiry import router as expiry_router
 from backend.routes.redistribution import router as redistribution_router
 from backend.routes.priority import router as priority_router
+from backend.routes.sarvam_agent import router as sarvam_router
 
 app.include_router(medicine_request_router)
 app.include_router(nearby_hospitals_router)
@@ -63,6 +64,7 @@ app.include_router(risk_router)
 app.include_router(expiry_router)
 app.include_router(redistribution_router)
 app.include_router(priority_router)
+app.include_router(sarvam_router)
 
 # === CENTRAL IN-MEMORY STATE ===
 from state import state, SystemState
@@ -516,7 +518,8 @@ if __name__ == "__main__":
         except Exception:
             pass
     
-    host = os.getenv("HOST", "127.0.0.1")
+    host = os.getenv("HOST", "0.0.0.0")
     port = int(os.getenv("PORT", "8000"))
+    reload_enabled = os.getenv("RELOAD", "true").lower() in ("true", "1")
     print(f"[*] Starting MedFlow-AI Server on http://{host}:{port}")
-    uvicorn.run("server:app", host=host, port=port, reload=True)
+    uvicorn.run("server:app", host=host, port=port, reload=reload_enabled)
