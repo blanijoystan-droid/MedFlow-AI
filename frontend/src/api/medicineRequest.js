@@ -2,11 +2,9 @@
  * API Service for Inter-Hospital Medicine Requisitions & Map Queries.
  */
 
+const isDev = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+
 const getApiUrl = (endpoint) => {
-  // If running directly on a different host or standalone port
-  if (typeof window !== 'undefined' && window.location.port === '5173') {
-    return endpoint; // Proxied via Vite
-  }
   return endpoint;
 };
 
@@ -25,17 +23,19 @@ export async function sendMedicineRequest(payload) {
 
     return await res.json();
   } catch (error) {
-    // Fallback direct request to backend port 8000 if proxy failed
-    try {
-      const resFallback = await fetch("http://localhost:8000/api/request-medicine", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      });
-      return await resFallback.json();
-    } catch (e) {
-      throw error;
+    if (isDev) {
+      try {
+        const resFallback = await fetch("http://localhost:8000/api/request-medicine", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        return await resFallback.json();
+      } catch (e) {
+        throw error;
+      }
     }
+    throw error;
   }
 }
 
@@ -55,8 +55,11 @@ export async function fetchNearbyHospitals(
     }
     return await res.json();
   } catch (error) {
-    const fallbackRes = await fetch(`http://localhost:8000/api/nearby-hospitals${query}`);
-    return await fallbackRes.json();
+    if (isDev) {
+      const fallbackRes = await fetch(`http://localhost:8000/api/nearby-hospitals${query}`);
+      return await fallbackRes.json();
+    }
+    throw error;
   }
 }
 
@@ -69,13 +72,16 @@ export async function searchOsmLocations(query) {
     const data = await res.json();
     return data.results || [];
   } catch (error) {
-    try {
-      const fallbackRes = await fetch(`http://localhost:8000/api/osm-geocode?q=${qStr}`);
-      const data = await fallbackRes.json();
-      return data.results || [];
-    } catch (e) {
-      return [];
+    if (isDev) {
+      try {
+        const fallbackRes = await fetch(`http://localhost:8000/api/osm-geocode?q=${qStr}`);
+        const data = await fallbackRes.json();
+        return data.results || [];
+      } catch (e) {
+        return [];
+      }
     }
+    return [];
   }
 }
 
@@ -85,12 +91,13 @@ export async function detectLiveLocation() {
     if (!res.ok) throw new Error("Failed to detect live location");
     return await res.json();
   } catch (error) {
-    try {
-      const fallbackRes = await fetch('http://localhost:8000/api/detect-location');
-      return await fallbackRes.json();
-    } catch (e) {
-      return { success: false, lat: 12.9187, lng: 74.8598, city: "Mangaluru" };
+    if (isDev) {
+      try {
+        const fallbackRes = await fetch('http://localhost:8000/api/detect-location');
+        return await fallbackRes.json();
+      } catch (e) {}
     }
+    return { success: false, lat: 12.9187, lng: 74.8598, city: "Mangaluru" };
   }
 }
 
@@ -100,12 +107,13 @@ export async function reverseGeocodeOsm(lat, lng) {
     if (!res.ok) throw new Error("Reverse geocode failed");
     return await res.json();
   } catch (error) {
-    try {
-      const fallbackRes = await fetch(`http://localhost:8000/api/osm-reverse-geocode?lat=${lat}&lng=${lng}`);
-      return await fallbackRes.json();
-    } catch (e) {
-      return { short_name: `${lat.toFixed(4)}°N, ${lng.toFixed(4)}°E` };
+    if (isDev) {
+      try {
+        const fallbackRes = await fetch(`http://localhost:8000/api/osm-reverse-geocode?lat=${lat}&lng=${lng}`);
+        return await fallbackRes.json();
+      } catch (e) {}
     }
+    return { short_name: `${lat.toFixed(4)}°N, ${lng.toFixed(4)}°E` };
   }
 }
 
@@ -115,8 +123,11 @@ export async function fetchMedicineRequests() {
     if (!res.ok) throw new Error("Failed to fetch medicine requests");
     return await res.json();
   } catch (error) {
-    const fallbackRes = await fetch('http://localhost:8000/api/medicine-requests');
-    return await fallbackRes.json();
+    if (isDev) {
+      const fallbackRes = await fetch('http://localhost:8000/api/medicine-requests');
+      return await fallbackRes.json();
+    }
+    throw error;
   }
 }
 
@@ -129,11 +140,14 @@ export async function updateMedicineRequestStatus(requestId, status) {
     });
     return await res.json();
   } catch (error) {
-    const fallbackRes = await fetch(`http://localhost:8000/api/medicine-requests/${requestId}/status`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status })
-    });
-    return await fallbackRes.json();
+    if (isDev) {
+      const fallbackRes = await fetch(`http://localhost:8000/api/medicine-requests/${requestId}/status`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status })
+      });
+      return await fallbackRes.json();
+    }
+    throw error;
   }
 }

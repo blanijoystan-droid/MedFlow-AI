@@ -43,11 +43,15 @@ export default function SupplyChainChatbot() {
           body: JSON.stringify({ question: trimmedQuestion }),
         });
       } catch (err) {
-        response = await fetch('http://localhost:8000/api/chat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ question: trimmedQuestion }),
-        });
+        if (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
+          response = await fetch('http://localhost:8000/api/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ question: trimmedQuestion }),
+          });
+        } else {
+          throw err;
+        }
       }
       const data = await response.json();
       if (!response.ok) {

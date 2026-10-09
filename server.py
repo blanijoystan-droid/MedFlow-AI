@@ -143,6 +143,7 @@ def root():
 
 
 @app.get("/health")
+@app.get("/api/health")
 def health_check():
     """Lightweight health-check endpoint for the frontend/deployment."""
     return {
@@ -520,6 +521,7 @@ if __name__ == "__main__":
     
     host = os.getenv("HOST", "0.0.0.0")
     port = int(os.getenv("PORT", "8000"))
-    reload_enabled = os.getenv("RELOAD", "true").lower() in ("true", "1")
+    default_reload = "false" if (os.getenv("PORT") or os.getenv("RENDER") or os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("SPACE_ID")) else "true"
+    reload_enabled = os.getenv("RELOAD", default_reload).lower() in ("true", "1")
     print(f"[*] Starting MedFlow-AI Server on http://{host}:{port}")
     uvicorn.run("server:app", host=host, port=port, reload=reload_enabled)

@@ -53,15 +53,18 @@ export default function SarvamCallAgentModal({ hospitals = [] }) {
       if (res.ok) return await res.json();
     } catch (e) {}
 
-    try {
-      const res = await fetch(`http://127.0.0.1:8000${endpoint}`, options);
-      if (res.ok) return await res.json();
-    } catch (e) {}
+    const isLocal = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+    if (isLocal) {
+      try {
+        const res = await fetch(`http://127.0.0.1:8000${endpoint}`, options);
+        if (res.ok) return await res.json();
+      } catch (e) {}
 
-    try {
-      const res = await fetch(`http://localhost:8000${endpoint}`, options);
-      if (res.ok) return await res.json();
-    } catch (e) {}
+      try {
+        const res = await fetch(`http://localhost:8000${endpoint}`, options);
+        if (res.ok) return await res.json();
+      } catch (e) {}
+    }
 
     return null;
   };

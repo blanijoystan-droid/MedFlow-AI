@@ -2,6 +2,8 @@
  * API Service for Engine 5: Priority Engine ⚖️
  */
 
+const isDev = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+
 export async function fetchPriorityTriage(medicine = "Insulin", units = null) {
   let url = `/api/priority/triage?medicine=${encodeURIComponent(medicine)}`;
   if (units) {
@@ -12,8 +14,11 @@ export async function fetchPriorityTriage(medicine = "Insulin", units = null) {
     if (!res.ok) throw new Error("Failed to fetch priority triage");
     return await res.json();
   } catch (error) {
-    const fallbackRes = await fetch(`http://localhost:8000${url}`);
-    return await fallbackRes.json();
+    if (isDev) {
+      const fallbackRes = await fetch(`http://localhost:8000${url}`);
+      return await fallbackRes.json();
+    }
+    throw error;
   }
 }
 
@@ -24,8 +29,11 @@ export async function fetchHospitalPriorityEvaluation(hospital = "City General H
     if (!res.ok) throw new Error("Failed to fetch hospital priority evaluation");
     return await res.json();
   } catch (error) {
-    const fallbackRes = await fetch(`http://localhost:8000${url}`);
-    return await fallbackRes.json();
+    if (isDev) {
+      const fallbackRes = await fetch(`http://localhost:8000${url}`);
+      return await fallbackRes.json();
+    }
+    throw error;
   }
 }
 
@@ -36,7 +44,11 @@ export async function fetchNetworkPriorityOverview() {
     if (!res.ok) throw new Error("Failed to fetch network priority overview");
     return await res.json();
   } catch (error) {
-    const fallbackRes = await fetch(`http://localhost:8000${url}`);
-    return await fallbackRes.json();
+    if (isDev) {
+      const fallbackRes = await fetch(`http://localhost:8000${url}`);
+      return await fallbackRes.json();
+    }
+    throw error;
   }
 }
+

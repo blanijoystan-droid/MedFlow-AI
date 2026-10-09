@@ -2,6 +2,8 @@
  * API Service for Engine 4: Redistribution Optimizer 🔄
  */
 
+const isDev = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+
 export async function fetchRedistributionRecommendation(recipient = "Rural Primary Health Centre", medicine = "Amoxicillin", quantity = null) {
   let url = `/api/redistribution/optimize?recipient=${encodeURIComponent(recipient)}&medicine=${encodeURIComponent(medicine)}`;
   if (quantity) {
@@ -12,8 +14,11 @@ export async function fetchRedistributionRecommendation(recipient = "Rural Prima
     if (!res.ok) throw new Error("Failed to fetch redistribution recommendation");
     return await res.json();
   } catch (error) {
-    const fallbackRes = await fetch(`http://localhost:8000${url}`);
-    return await fallbackRes.json();
+    if (isDev) {
+      const fallbackRes = await fetch(`http://localhost:8000${url}`);
+      return await fallbackRes.json();
+    }
+    throw error;
   }
 }
 
@@ -24,8 +29,11 @@ export async function fetchNetworkOpportunities() {
     if (!res.ok) throw new Error("Failed to fetch redistribution opportunities");
     return await res.json();
   } catch (error) {
-    const fallbackRes = await fetch(`http://localhost:8000${url}`);
-    return await fallbackRes.json();
+    if (isDev) {
+      const fallbackRes = await fetch(`http://localhost:8000${url}`);
+      return await fallbackRes.json();
+    }
+    throw error;
   }
 }
 
@@ -44,12 +52,15 @@ export async function executeRedistribution(donor, recipient, medicine, units) {
     }
     return await res.json();
   } catch (error) {
-    const fallbackRes = await fetch(`http://localhost:8000${url}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-    return await fallbackRes.json();
+    if (isDev) {
+      const fallbackRes = await fetch(`http://localhost:8000${url}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      return await fallbackRes.json();
+    }
+    throw error;
   }
 }
 
@@ -60,7 +71,10 @@ export async function fetchNetworkLogistics() {
     if (!res.ok) throw new Error("Failed to fetch network logistics");
     return await res.json();
   } catch (error) {
-    const fallbackRes = await fetch(`http://localhost:8000${url}`);
-    return await fallbackRes.json();
+    if (isDev) {
+      const fallbackRes = await fetch(`http://localhost:8000${url}`);
+      return await fallbackRes.json();
+    }
+    throw error;
   }
 }

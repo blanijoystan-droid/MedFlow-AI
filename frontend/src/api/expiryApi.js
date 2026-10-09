@@ -2,6 +2,8 @@
  * API Service for Engine 3: Expiry Intelligence ♻️
  */
 
+const isDev = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+
 const getApiUrl = (endpoint) => {
   return endpoint;
 };
@@ -13,8 +15,11 @@ export async function fetchMedicineExpiryAudit(hospital = "District Government H
     if (!res.ok) throw new Error("Failed to fetch expiry audit");
     return await res.json();
   } catch (error) {
-    const fallbackRes = await fetch(`http://localhost:8000${url}`);
-    return await fallbackRes.json();
+    if (isDev) {
+      const fallbackRes = await fetch(`http://localhost:8000${url}`);
+      return await fallbackRes.json();
+    }
+    throw error;
   }
 }
 
@@ -25,8 +30,11 @@ export async function fetchNetworkExpiryOverview() {
     if (!res.ok) throw new Error("Failed to fetch network expiry overview");
     return await res.json();
   } catch (error) {
-    const fallbackRes = await fetch(`http://localhost:8000${url}`);
-    return await fallbackRes.json();
+    if (isDev) {
+      const fallbackRes = await fetch(`http://localhost:8000${url}`);
+      return await fallbackRes.json();
+    }
+    throw error;
   }
 }
 
@@ -37,7 +45,10 @@ export async function fetchDonationCandidates() {
     if (!res.ok) throw new Error("Failed to fetch donation candidates");
     return await res.json();
   } catch (error) {
-    const fallbackRes = await fetch(`http://localhost:8000${url}`);
-    return await fallbackRes.json();
+    if (isDev) {
+      const fallbackRes = await fetch(`http://localhost:8000${url}`);
+      return await fallbackRes.json();
+    }
+    throw error;
   }
 }

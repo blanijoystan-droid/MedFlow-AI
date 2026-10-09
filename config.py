@@ -13,7 +13,7 @@ env_path = Path(__file__).parent / '.env'
 load_dotenv(dotenv_path=env_path)
 
 # === PROVIDER & API KEY CONFIGURATION ===
-GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY') or os.getenv('GOOGLE_API_KEY')
 GROK_API_KEY = os.getenv('GROK_API_KEY') or os.getenv('XAI_API_KEY')
 
 # Auto-detect or use explicit provider
