@@ -28,7 +28,8 @@ export default function PriorityEngineModal({
   isOpen,
   onClose,
   initialMedicine = "Insulin",
-  onTriggerRequisition
+  onTriggerRequisition,
+  hospitals = []
 }) {
   const [selectedMedicine, setSelectedMedicine] = useState(initialMedicine);
   const [batchUnits, setBatchUnits] = useState(500);

@@ -105,6 +105,21 @@ export default function HospitalCard({ hospital, isRequester, isDonor }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '0.2rem', flexWrap: 'wrap' }}>
           <MapPin size={13} color="#06b6d4" />
           <span>{hospital.location}</span>
+          {hospital.distance_km != null && (
+            <span style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              fontSize: '0.74rem',
+              fontWeight: '700',
+              color: '#06b6d4',
+              background: 'rgba(6, 182, 212, 0.12)',
+              padding: '0.1rem 0.45rem',
+              borderRadius: '6px',
+              marginLeft: '0.2rem'
+            }}>
+              📍 {typeof hospital.distance_km === 'number' ? hospital.distance_km.toFixed(1) : hospital.distance_km} km away
+            </span>
+          )}
           {hospital.latitude && hospital.longitude && (
             <span style={{ fontSize: '0.72rem', opacity: 0.75, fontFamily: 'var(--font-mono)', marginLeft: '0.25rem' }}>
               ({typeof hospital.latitude === 'number' ? hospital.latitude.toFixed(4) : hospital.latitude}°N, {typeof hospital.longitude === 'number' ? hospital.longitude.toFixed(4) : hospital.longitude}°E)

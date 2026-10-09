@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   ArrowRight, Truck, ShieldCheck, CheckCircle2, AlertTriangle, 
   MapPin, Clock, Package, RefreshCw, X, Zap, Check, AlertCircle, ThermometerSnowflake
@@ -31,11 +31,21 @@ const MEDICINES = [
 export default function RedistributionModal({
   isOpen,
   onClose,
-  initialRecipient = "Rural Primary Health Centre",
+  initialRecipient,
   initialMedicine = "Amoxicillin",
+  hospitals = [],
   onTransferExecuted
 }) {
-  const [recipient, setRecipient] = useState(initialRecipient);
+  const activeHospitalList = useMemo(() => {
+    if (hospitals && hospitals.length > 0) {
+      return hospitals.map(h => typeof h === 'string' ? h : h.name);
+    }
+    return HOSPITALS;
+  }, [hospitals]);
+
+  const [recipient, setRecipient] = useState(
+    initialRecipient || (hospitals[0]?.name || HOSPITALS[0])
+  );
   const [medicine, setMedicine] = useState(initialMedicine);
   const [requestedUnits, setRequestedUnits] = useState("");
   const [activeTab, setActiveTab] = useState("OPTIMIZER"); // OPTIMIZER or OPPORTUNITIES
@@ -47,9 +57,16 @@ export default function RedistributionModal({
   const [executionResult, setExecutionResult] = useState(null);
 
   useEffect(() => {
-    if (initialRecipient) setRecipient(initialRecipient);
+    if (initialRecipient && activeHospitalList.includes(initialRecipient)) {
+      setRecipient(initialRecipient);
+    } else if (activeHospitalList.length > 0 && !activeHospitalList.includes(recipient)) {
+      setRecipient(activeHospitalList[0]);
+    }
+  }, [initialRecipient, activeHospitalList]);
+
+  useEffect(() => {
     if (initialMedicine) setMedicine(initialMedicine);
-  }, [initialRecipient, initialMedicine]);
+  }, [initialMedicine]);
 
   const loadData = async () => {
     setLoading(true);
@@ -166,9 +183,17 @@ export default function RedistributionModal({
                   onChange={(e) => setRecipient(e.target.value)}
                   className="redist-select"
                 >
-                  {HOSPITALS.map(h => (
-                    <option key={h} value={h}>{h}</option>
-                  ))}
+                  {activeHospitalList.map(hName => {
+                    const hospObj = hospitals?.find(x => (x.name || x) === hName);
+                    const distLabel = hospObj?.distance_km != null 
+                      ? ` (📍 ${typeof hospObj.distance_km === 'number' ? hospObj.distance_km.toFixed(1) : hospObj.distance_km} km)` 
+                      : '';
+                    return (
+                      <option key={hName} value={hName}>
+                        {hName}{distLabel}
+                      </option>
+                    );
+                  })}
                 </select>
               </div>
 

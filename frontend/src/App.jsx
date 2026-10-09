@@ -14,7 +14,7 @@ import RiskEngineModal from './components/RiskEngineModal';
 import ExpiryIntelligenceModal from './components/ExpiryIntelligenceModal';
 import RedistributionModal from './components/RedistributionModal';
 import PriorityEngineModal from './components/PriorityEngineModal';
-import { Play, Sparkles, Brain, CheckCircle2, AlertTriangle, ShieldCheck, HelpCircle, Building2, RefreshCw } from 'lucide-react';
+import { Play, Sparkles, Brain, CheckCircle2, AlertTriangle, ShieldCheck, HelpCircle, Building2, RefreshCw, MapPin, Navigation, Search } from 'lucide-react';
 
 export default function App() {
   const [status, setStatus] = useState(null);
@@ -26,7 +26,20 @@ export default function App() {
   const [reasoningData, setReasoningData] = useState({ logs: [], stats: {} });
   const [medicineRequests, setMedicineRequests] = useState([]);
 
-  // Dakshina Kannada regional state
+  // Live geographic position & radius filtering state
+  const [userLocation, setUserLocation] = useState({
+    lat: 12.8649,
+    lng: 74.8360,
+    label: 'Detecting Location...',
+    city: 'Detecting...',
+    source: 'Live GPS/IP',
+    radiusKm: 15
+  });
+  const [isDetectingLocation, setIsDetectingLocation] = useState(false);
+  const [locationSearchQuery, setLocationSearchQuery] = useState('');
+  const [isSearchingLocation, setIsSearchingLocation] = useState(false);
+
+  // Regional state
   const [directory, setDirectory] = useState([]);
   const [taluks, setTaluks] = useState([]);
   const [selectedTaluk, setSelectedTaluk] = useState('All');
@@ -100,22 +113,149 @@ export default function App() {
     }
   };
 
+  // Auto-detect live position (Browser GPS with IP fallback)
+  const detectLiveLocation = async (radiusOverride = null) => {
+    setIsDetectingLocation(true);
+    const radiusToUse = radiusOverride ?? userLocation.radiusKm ?? 15;
+
+    const commitLocation = async (lat, lng, label, city, source) => {
+      setUserLocation(prev => ({
+        ...prev,
+        lat,
+        lng,
+        label,
+        city,
+        source,
+        radiusKm: radiusToUse
+      }));
+      await handleNewScenario(null, nodeCount, null, lat, lng, radiusToUse, label);
+    };
+
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        async (position) => {
+          const lat = position.coords.latitude;
+          const lng = position.coords.longitude;
+          try {
+            const revRes = await fetch(`/api/osm-reverse-geocode?lat=${lat}&lng=${lng}`).then(r => r.json());
+            const label = revRes.locality || revRes.display_name?.split(',')[0] || `${lat.toFixed(4)}°N, ${lng.toFixed(4)}°E`;
+            const city = revRes.city || revRes.district || 'Live Location';
+            await commitLocation(lat, lng, label, city, 'Device GPS');
+          } catch {
+            await commitLocation(lat, lng, `${lat.toFixed(4)}°N, ${lng.toFixed(4)}°E`, 'Live Location', 'Device GPS');
+          }
+          setIsDetectingLocation(false);
+        },
+        async (err) => {
+          console.warn("Browser GPS unavailable, falling back to IP geolocation:", err);
+          await detectViaIp(radiusToUse);
+          setIsDetectingLocation(false);
+        },
+        { enableHighAccuracy: true, timeout: 6000, maximumAge: 60000 }
+      );
+    } else {
+      await detectViaIp(radiusToUse);
+      setIsDetectingLocation(false);
+    }
+  };
+
+  const detectViaIp = async (radiusToUse) => {
+    try {
+      const res = await fetch('/api/detect-location').then(r => r.json());
+      const lat = res.lat || 12.8649;
+      const lng = res.lng || 74.8360;
+      const city = res.city || 'Regional Area';
+      const label = `${city}${res.region ? ', ' + res.region : ''}`;
+      setUserLocation(prev => ({
+        ...prev,
+        lat,
+        lng,
+        label,
+        city,
+        source: res.source || 'Network Geolocation',
+        radiusKm: radiusToUse
+      }));
+      await handleNewScenario(null, nodeCount, null, lat, lng, radiusToUse, label);
+    } catch (e) {
+      console.error("IP Geolocation failed:", e);
+      setUserLocation(prev => ({
+        ...prev,
+        lat: 12.8649,
+        lng: 74.8360,
+        label: 'Mangaluru Central',
+        city: 'Mangaluru',
+        source: 'Regional Hub',
+        radiusKm: radiusToUse
+      }));
+      await handleNewScenario(null, nodeCount, null, 12.8649, 74.8360, radiusToUse, 'Mangaluru Central');
+    }
+  };
+
+  // Search any city or place coordinates
+  const handleSearchLocation = async (e) => {
+    e?.preventDefault();
+    if (!locationSearchQuery.trim()) return;
+    setIsSearchingLocation(true);
+    try {
+      const res = await fetch(`/api/osm-geocode?q=${encodeURIComponent(locationSearchQuery.trim())}`).then(r => r.json());
+      if (res.results && res.results.length > 0) {
+        const top = res.results[0];
+        const lat = parseFloat(top.lat);
+        const lng = parseFloat(top.lng);
+        const label = top.display_name.split(',').slice(0, 2).join(', ');
+        setUserLocation(prev => ({
+          ...prev,
+          lat,
+          lng,
+          label,
+          city: label,
+          source: 'Geocoded Search'
+        }));
+        await handleNewScenario(null, nodeCount, null, lat, lng, userLocation.radiusKm, label);
+        setLocationSearchQuery('');
+      } else {
+        setErrorBanner(`Could not find coordinates for "${locationSearchQuery}". Try another city or landmark.`);
+      }
+    } catch (err) {
+      console.error("Geocoding failed:", err);
+      setErrorBanner("Location search failed. Please try again.");
+    } finally {
+      setIsSearchingLocation(false);
+    }
+  };
+
   useEffect(() => {
-    fetchAllData();
+    const initializeApp = async () => {
+      await fetchAllData();
+      await detectLiveLocation();
+    };
+    initializeApp();
   }, []);
 
-  // Handler: Generate New Scenario within Dakshina Kannada
-  const handleNewScenario = async (taluk = selectedTaluk, count = nodeCount, hospitalNames = null) => {
+  // Handler: Generate New Scenario filtered by Live Location or custom coordinates
+  const handleNewScenario = async (
+    taluk = null,
+    count = nodeCount,
+    hospitalNames = null,
+    lat = userLocation.lat,
+    lng = userLocation.lng,
+    radiusKm = userLocation.radiusKm,
+    locationLabel = userLocation.label
+  ) => {
     setLoading(true);
     setErrorBanner(null);
     try {
-      const res = await fetch('/api/scenario/new', { 
+      const res = await fetch('/api/scenario/new', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          taluk: taluk === 'All' ? null : taluk, 
+        body: JSON.stringify({
+          taluk: taluk === 'All' ? null : taluk,
           count: count,
-          hospital_names: hospitalNames 
+          hospital_names: hospitalNames,
+          lat: lat,
+          lng: lng,
+          radius_km: radiusKm,
+          location_label: locationLabel
         })
       });
       const data = await res.json();
@@ -126,17 +266,20 @@ export default function App() {
       setEvents(data.events || []);
       setPendingTrade(data.pending_trade);
       if (taluk) setSelectedTaluk(taluk);
+      if (data.user_location) {
+        setUserLocation(prev => ({
+          ...prev,
+          lat: data.user_location.lat ?? prev.lat,
+          lng: data.user_location.lng ?? prev.lng,
+          label: data.user_location.label || prev.label,
+          radiusKm: data.user_location.radius_km || prev.radiusKm
+        }));
+      }
     } catch (err) {
       setErrorBanner(err.message);
     } finally {
       setLoading(false);
     }
-  };
-
-  // Select hospital from the Dakshina Kannada directory modal
-  const handleSelectHospitalFromDirectory = (hosp) => {
-    setShowDirectoryModal(false);
-    handleNewScenario(hosp.taluk, 3, [hosp.name]);
   };
 
   // Handler: Start AI Negotiation
@@ -168,8 +311,8 @@ export default function App() {
       // Smooth scroll to pending trade panel if trade proposed
       if (data.pending_trade) {
         setTimeout(() => {
-          document.getElementById('verification-panel')?.scrollIntoView({ behavior: 'smooth' });
-        }, 150);
+          document.getElementById('verification-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }, 100);
       }
     } catch (err) {
       setErrorBanner(err.message);
@@ -276,10 +419,10 @@ export default function App() {
   return (
     <div className="dashboard-shell" style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
       {/* Top Clinical Navigation */}
-      <Navbar 
+      <Navbar
         status={status}
         scenarioCount={scenarioCount}
-        onNewScenario={() => handleNewScenario(selectedTaluk, nodeCount)}
+        onNewScenario={() => handleNewScenario(null, nodeCount, null, userLocation.lat, userLocation.lng, userLocation.radiusKm, userLocation.label)}
         onOpenKeyModal={() => setShowKeyModal(true)}
         onOpenFindMedicine={() => setShowFindMedicineModal(true)}
         onOpenForecast={() => setShowForecastModal(true)}
@@ -294,7 +437,7 @@ export default function App() {
 
       {/* Main Operations Container */}
       <main className="dashboard-main" style={{ maxWidth: '1440px', width: '100%', margin: '0 auto', padding: '0 1.5rem 3rem 1.5rem', display: 'flex', flexDirection: 'column', gap: '1.75rem' }}>
-        
+
         {/* Error Alert Banner with Emergency Map Fallback Trigger */}
         {errorBanner && (
           <div style={{
@@ -332,7 +475,7 @@ export default function App() {
               >
                 🗺️ Open Emergency Map Requisition
               </button>
-              <button 
+              <button
                 onClick={() => setErrorBanner(null)}
                 style={{ background: 'transparent', border: 'none', color: 'inherit', cursor: 'pointer', fontWeight: '700', fontSize: '1.1rem' }}
               >
@@ -356,24 +499,34 @@ export default function App() {
           <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
             <button
               className="btn btn-primary"
-              onClick={pendingTrade ? () => document.getElementById('verification-panel')?.scrollIntoView({ behavior: 'smooth' }) : handleStartNegotiation}
+              onClick={pendingTrade ? () => document.getElementById('verification-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' }) : handleStartNegotiation}
               disabled={isNegotiating || processingTrade}
               id="start-negotiation-btn"
-              style={{ padding: '0.8rem 1.6rem', fontSize: '0.95rem' }}
+              style={{
+                padding: '0.8rem 1.6rem',
+                fontSize: '0.95rem',
+                cursor: (isNegotiating || processingTrade) ? 'not-allowed' : 'pointer',
+                background: pendingTrade ? 'linear-gradient(135deg, #f59e0b, #d97706)' : undefined,
+                boxShadow: pendingTrade ? '0 0 20px rgba(245, 158, 11, 0.45)' : undefined
+              }}
               title={pendingTrade ? "Review pending trade proposal below" : "Run autonomous multi-agent AI negotiation"}
             >
               <Sparkles size={18} className={isNegotiating ? "spin" : ""} />
               <span>
-                {isNegotiating 
-                  ? 'Evaluating Peer Inventories...' 
-                  : pendingTrade 
-                    ? '⚠️ Trade Pending Approval (Review Below)' 
+                {isNegotiating
+                  ? 'Evaluating Peer Inventories...'
+                  : pendingTrade
+                    ? '⚠️ Trade Pending Approval (Review Below)'
                     : '🚀 Start AI Negotiation'}
               </span>
             </button>
 
             {pendingTrade && (
-              <span className="badge badge-critical" style={{ fontSize: '0.78rem', padding: '0.35rem 0.75rem', animation: 'pulse 2s infinite' }}>
+              <span 
+                className="badge badge-critical" 
+                onClick={() => document.getElementById('verification-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+                style={{ fontSize: '0.78rem', padding: '0.35rem 0.75rem', animation: 'pulse 2s infinite', cursor: 'pointer' }}
+              >
                 <AlertTriangle size={14} /> Action Required: 1% Human Verification
               </span>
             )}
@@ -406,9 +559,21 @@ export default function App() {
           </div>
         </section>
 
-        {/* SECTION 1: REGIONAL HOSPITAL INVENTORY NETWORK (Dakshina Kannada Corridor) */}
+        {/* SECTION: HUMAN-IN-THE-LOOP VERIFICATION (Active Proposal) */}
+        {pendingTrade && (
+          <section id="verification-panel" style={{ scrollMarginTop: '20px' }}>
+            <PendingTradePanel
+              pendingTrade={pendingTrade}
+              onApprove={handleApproveTrade}
+              onReject={handleRejectTrade}
+              processing={processingTrade}
+            />
+          </section>
+        )}
+
+        {/* SECTION 1: REGIONAL HOSPITAL INVENTORY NETWORK (Filtered by Live Location) */}
         <section>
-          {/* District Header & Quick Actions */}
+          {/* Header & Live Location Actions */}
           <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '0.85rem', flexWrap: 'wrap', gap: '0.85rem' }}>
             <div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
@@ -419,13 +584,27 @@ export default function App() {
                   {hospitals.length} Active Nodes
                 </span>
               </div>
-              <span style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
-                Karnataka Healthcare Corridor • Dakshina Kannada District ({directory.length || 28} Facilities across 7 Taluks)
-              </span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.25rem', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+                  📍 Filtered by Live Location: <strong style={{ color: 'var(--teal-400, #06b6d4)' }}>{userLocation.label}</strong> ({userLocation.source}) • Radius: <strong>{userLocation.radiusKm} km</strong>
+                </span>
+              </div>
             </div>
 
-            {/* Action Buttons: Directory Modal & Node Count */}
+            {/* Action Buttons: Live Locate, Node Count & Regenerate */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', flexWrap: 'wrap' }}>
+              {/* GPS Live Locate Button */}
+              <button
+                className="btn btn-secondary"
+                onClick={() => detectLiveLocation()}
+                disabled={isDetectingLocation || loading}
+                style={{ padding: '0.5rem 0.85rem', fontSize: '0.82rem' }}
+                title="Re-detect live GPS / network coordinates"
+              >
+                <MapPin size={14} color="#06b6d4" className={isDetectingLocation ? "spin" : ""} />
+                <span>{isDetectingLocation ? 'Locating...' : '🎯 My Live Location'}</span>
+              </button>
+
               {/* Node count toggle */}
               <div style={{
                 display: 'flex',
@@ -440,7 +619,7 @@ export default function App() {
                     key={n}
                     onClick={() => {
                       setNodeCount(n);
-                      handleNewScenario(selectedTaluk, n);
+                      handleNewScenario(null, n, null, userLocation.lat, userLocation.lng, userLocation.radiusKm, userLocation.label);
                     }}
                     style={{
                       padding: '0.25rem 0.65rem',
@@ -458,24 +637,13 @@ export default function App() {
                 ))}
               </div>
 
-              {/* View Full Directory Button */}
-              <button
-                className="btn btn-secondary"
-                onClick={() => setShowDirectoryModal(true)}
-                style={{ padding: '0.5rem 0.95rem', fontSize: '0.82rem' }}
-                id="view-dk-directory-btn"
-              >
-                <Building2 size={15} color="#06b6d4" />
-                <span>🏥 District Directory ({directory.length || 28})</span>
-              </button>
-
               {/* Regenerate Scenario */}
               <button
                 className="btn btn-secondary"
-                onClick={() => handleNewScenario(selectedTaluk, nodeCount)}
+                onClick={() => handleNewScenario(null, nodeCount, null, userLocation.lat, userLocation.lng, userLocation.radiusKm, userLocation.label)}
                 disabled={loading}
                 style={{ padding: '0.5rem 0.95rem', fontSize: '0.82rem' }}
-                title="Generate new crisis scenario in current corridor"
+                title="Generate new crisis scenario filtered by live location"
               >
                 <RefreshCw size={14} className={loading ? "spin" : ""} />
                 <span>New Scenario</span>
@@ -483,54 +651,76 @@ export default function App() {
             </div>
           </div>
 
-          {/* Taluk Corridor Switcher Tabs */}
+          {/* Live Radius Filter Bar & Area Search */}
           <div style={{
             display: 'flex',
             alignItems: 'center',
-            gap: '0.45rem',
+            justifyContent: 'space-between',
+            gap: '0.85rem',
             marginBottom: '1.25rem',
-            overflowX: 'auto',
-            paddingBottom: '0.35rem'
+            flexWrap: 'wrap'
           }}>
-            <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: '700', marginRight: '0.3rem', whiteSpace: 'nowrap' }}>
-              Corridor:
-            </span>
-            {(taluks.length > 0 ? taluks : [
-              { name: 'All', label: 'All Dakshina Kannada', count: 28 },
-              { name: 'Mangalore', label: 'Mangalore', count: 14 },
-              { name: 'Bantwal', label: 'Bantwal', count: 3 },
-              { name: 'Puttur', label: 'Puttur', count: 3 },
-              { name: 'Belthangady', label: 'Belthangady', count: 3 },
-              { name: 'Sullia', label: 'Sullia', count: 2 },
-              { name: 'Moodbidri', label: 'Moodbidri', count: 2 },
-              { name: 'Kadaba', label: 'Kadaba', count: 1 },
-            ]).map(t => {
-              const isActive = selectedTaluk === t.name;
-              return (
-                <button
-                  key={t.name}
-                  onClick={() => {
-                    setSelectedTaluk(t.name);
-                    handleNewScenario(t.name, nodeCount);
-                  }}
-                  disabled={loading}
-                  style={{
-                    padding: '0.4rem 0.85rem',
-                    borderRadius: '9999px',
-                    fontSize: '0.78rem',
-                    fontWeight: '700',
-                    cursor: 'pointer',
-                    whiteSpace: 'nowrap',
-                    border: isActive ? '1px solid var(--teal-600, #06b6d4)' : '1px solid var(--border-subtle)',
-                    background: isActive ? 'var(--badge-surplus-bg)' : 'var(--bg-surface)',
-                    color: isActive ? 'var(--badge-surplus-text)' : 'var(--text-secondary)',
-                    transition: 'all 0.15s ease'
-                  }}
-                >
-                  {t.name} ({t.count})
-                </button>
-              );
-            })}
+            {/* Radius Filters */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', overflowX: 'auto', paddingBottom: '0.2rem' }}>
+              <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: '700', marginRight: '0.3rem', whiteSpace: 'nowrap' }}>
+                Distance Radius:
+              </span>
+              {[5, 10, 15, 25, 50].map(rad => {
+                const isActive = userLocation.radiusKm === rad;
+                return (
+                  <button
+                    key={rad}
+                    onClick={() => {
+                      setUserLocation(prev => ({ ...prev, radiusKm: rad }));
+                      handleNewScenario(null, nodeCount, null, userLocation.lat, userLocation.lng, rad, userLocation.label);
+                    }}
+                    disabled={loading}
+                    style={{
+                      padding: '0.4rem 0.85rem',
+                      borderRadius: '9999px',
+                      fontSize: '0.78rem',
+                      fontWeight: '700',
+                      cursor: 'pointer',
+                      whiteSpace: 'nowrap',
+                      border: isActive ? '1px solid var(--teal-600, #06b6d4)' : '1px solid var(--border-subtle)',
+                      background: isActive ? 'var(--badge-surplus-bg)' : 'var(--bg-surface)',
+                      color: isActive ? 'var(--badge-surplus-text)' : 'var(--text-secondary)',
+                      transition: 'all 0.15s ease'
+                    }}
+                  >
+                    Within {rad} km
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Quick Location / City Search Form */}
+            <form onSubmit={handleSearchLocation} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+              <input
+                type="text"
+                placeholder="Search city/area (e.g. Mangaluru, Bengaluru)..."
+                value={locationSearchQuery}
+                onChange={e => setLocationSearchQuery(e.target.value)}
+                style={{
+                  background: 'var(--bg-surface)',
+                  border: '1px solid var(--border-subtle)',
+                  borderRadius: 'var(--radius-md)',
+                  padding: '0.4rem 0.75rem',
+                  fontSize: '0.8rem',
+                  color: 'var(--text-primary)',
+                  minWidth: '220px',
+                  outline: 'none'
+                }}
+              />
+              <button
+                type="submit"
+                className="btn btn-secondary"
+                disabled={isSearchingLocation || !locationSearchQuery.trim()}
+                style={{ padding: '0.4rem 0.75rem', fontSize: '0.78rem' }}
+              >
+                {isSearchingLocation ? 'Searching...' : 'Set Area'}
+              </button>
+            </form>
           </div>
 
           {/* Hospital Cards Grid */}
@@ -540,8 +730,8 @@ export default function App() {
             gap: '1.25rem'
           }}>
             {hospitals.map((hospital, idx) => (
-              <HospitalCard 
-                key={hospital.name || idx} 
+              <HospitalCard
+                key={hospital.name || idx}
                 hospital={hospital}
                 isRequester={pendingTrade?.receiver === hospital.name}
                 isDonor={pendingTrade?.donor === hospital.name}
@@ -550,21 +740,9 @@ export default function App() {
           </div>
         </section>
 
-        {/* SECTION 2: HUMAN-IN-THE-LOOP VERIFICATION */}
-        {pendingTrade && (
-          <section id="verification-panel">
-            <PendingTradePanel 
-              pendingTrade={pendingTrade}
-              onApprove={handleApproveTrade}
-              onReject={handleRejectTrade}
-              processing={processingTrade}
-            />
-          </section>
-        )}
-
-        {/* SECTION 3: LIVE MULTI-AGENT NEGOTIATION FEED */}
+        {/* SECTION 2: LIVE MULTI-AGENT NEGOTIATION FEED */}
         <section>
-          <NegotiationFeed 
+          <NegotiationFeed
             events={events}
             isNegotiating={isNegotiating}
           />
@@ -573,7 +751,7 @@ export default function App() {
         {/* SECTION 4: AI REASONING TELEMETRY (Toggled) */}
         {showReasoning && (
           <section id="reasoning-telemetry">
-            <ReasoningDrawer 
+            <ReasoningDrawer
               reasoningData={reasoningData}
               onClearLog={handleClearReasoning}
             />
@@ -582,7 +760,7 @@ export default function App() {
 
         {/* SECTION 5: IMMUTABLE TRADE HISTORY AUDIT LOG & REQUISITION REQUESTS */}
         <section>
-          <TradeHistoryTable 
+          <TradeHistoryTable
             historyData={tradeHistory}
             medicineRequests={medicineRequests}
             onRefreshRequests={async () => {
@@ -595,17 +773,10 @@ export default function App() {
 
       </main>
 
-      {/* Dakshina Kannada Hospital Directory Modal */}
-      <DakshinaKannadaModal
-        isOpen={showDirectoryModal}
-        onClose={() => setShowDirectoryModal(false)}
-        directory={directory}
-        onSelectHospital={handleSelectHospitalFromDirectory}
-        currentActiveNames={hospitals.map(h => h.name)}
-      />
+
 
       {/* Interactive Find Medicine Nearby Modal */}
-      <FindMedicineModal 
+      <FindMedicineModal
         isOpen={showFindMedicineModal}
         onClose={() => setShowFindMedicineModal(false)}
         onRequestSuccess={() => {
@@ -615,61 +786,66 @@ export default function App() {
       />
 
       {/* Engine 1: Demand Forecast Modal */}
-      <DemandForecastModal 
+      <DemandForecastModal
         isOpen={showForecastModal}
         onClose={() => setShowForecastModal(false)}
-        initialHospital={forecastTarget.hospital}
+        initialHospital={hospitals[0]?.name || forecastTarget.hospital}
         initialMedicine={forecastTarget.medicine}
+        hospitals={hospitals}
         onTriggerRequisition={(req) => {
           setShowFindMedicineModal(true);
         }}
       />
 
       {/* Engine 2: Risk Engine Modal */}
-      <RiskEngineModal 
+      <RiskEngineModal
         isOpen={showRiskModal}
         onClose={() => setShowRiskModal(false)}
-        initialHospital={forecastTarget.hospital}
+        initialHospital={hospitals[0]?.name || forecastTarget.hospital}
         initialMedicine={forecastTarget.medicine}
+        hospitals={hospitals}
         onTriggerRequisition={(req) => {
           setShowFindMedicineModal(true);
         }}
       />
 
       {/* Engine 3: Expiry Intelligence Modal */}
-      <ExpiryIntelligenceModal 
+      <ExpiryIntelligenceModal
         isOpen={showExpiryModal}
         onClose={() => setShowExpiryModal(false)}
-        initialHospital={forecastTarget.hospital}
+        initialHospital={hospitals[0]?.name || forecastTarget.hospital}
         initialMedicine={forecastTarget.medicine}
+        hospitals={hospitals}
         onTriggerRequisition={(req) => {
           setShowFindMedicineModal(true);
         }}
       />
 
       {/* Engine 4: Redistribution Optimizer Modal */}
-      <RedistributionModal 
+      <RedistributionModal
         isOpen={showRedistributionModal}
         onClose={() => setShowRedistributionModal(false)}
-        initialRecipient={forecastTarget.hospital}
+        initialRecipient={hospitals[0]?.name || forecastTarget.hospital}
         initialMedicine={forecastTarget.medicine}
+        hospitals={hospitals}
         onTransferExecuted={async () => {
           await fetchAllData();
         }}
       />
 
       {/* Engine 5: Priority Engine Modal */}
-      <PriorityEngineModal 
+      <PriorityEngineModal
         isOpen={showPriorityModal}
         onClose={() => setShowPriorityModal(false)}
         initialMedicine={forecastTarget.medicine}
+        hospitals={hospitals}
         onTriggerRequisition={(req) => {
           setShowFindMedicineModal(true);
         }}
       />
 
       {/* API Key Modal */}
-      <ApiKeyModal 
+      <ApiKeyModal
         isOpen={showKeyModal}
         onClose={() => setShowKeyModal(false)}
         onSaveKey={handleSaveKey}

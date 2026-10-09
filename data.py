@@ -6,6 +6,7 @@ Loads real hospitals directly from dakshina_kannada_hospitals.csv.
 
 import os
 import csv
+import math
 import random
 from pathlib import Path
 from typing import Optional, List, Dict, Any
@@ -144,27 +145,38 @@ MEDICINES = [
 ]
 
 
+def calculate_haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Calculate the great-circle distance between two points on the Earth (in km)."""
+    R = 6371.0  # Earth's radius in kilometers
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = (math.sin(dlat / 2) ** 2 +
+         math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2) ** 2)
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return round(R * c, 2)
+
+
 def generate_hospitals(
     seed: Optional[int] = None,
     taluk: Optional[str] = None,
     count: int = 3,
-    hospital_names: Optional[List[str]] = None
+    hospital_names: Optional[List[str]] = None,
+    user_lat: Optional[float] = None,
+    user_lng: Optional[float] = None,
+    radius_km: Optional[float] = None
 ) -> list[HospitalAgent]:
     """
-    Generate a network of hospitals from dakshina_kannada_hospitals.csv with realistic inventories and guaranteed shortages.
+    Generate a network of hospitals dynamically filtered by the user's live geographic location,
+    with realistic inventories and guaranteed shortages.
 
     Args:
         seed: Random seed for reproducibility. If None, generates dynamic scenario.
-        taluk: Optional taluk name to filter hospitals within Dakshina Kannada (e.g. 'Mangalore', 'Bantwal').
+        taluk: Optional taluk name to filter hospitals within corridor.
         count: Number of hospitals to include in scenario (default: 3).
         hospital_names: Optional list of explicit hospital names to select.
-
-    Returns:
-        List of HospitalAgent objects with:
-        - Real hospital names and locations from Dakshina Kannada
-        - Randomized inventories
-        - At least 1 critical shortage
-        - Complementary surpluses
+        user_lat: Optional user's live latitude coordinate.
+        user_lng: Optional user's live longitude coordinate.
+        radius_km: Optional search radius in kilometers (default: 25.0).
     """
     if seed is not None:
         random.seed(seed)
@@ -177,19 +189,98 @@ def generate_hospitals(
     if hospital_names:
         selected_configs = [h for h in dk_hospitals if h["name"] in hospital_names]
 
-    # Priority 2: Filter by specific Taluk
+    # Priority 2: Filter and rank by User's Live Geographic Location
+    if not selected_configs and user_lat is not None and user_lng is not None:
+        u_lat = float(user_lat)
+        u_lng = float(user_lng)
+        max_rad = float(radius_km) if radius_km else 25.0
+
+        # Calculate distances to pre-cached verified facilities
+        scored = []
+        for h in dk_hospitals:
+            if h.get("latitude") and h.get("longitude"):
+                d = calculate_haversine_distance(u_lat, u_lng, float(h["latitude"]), float(h["longitude"]))
+                h_copy = dict(h)
+                h_copy["distance_km"] = d
+                scored.append(h_copy)
+
+        # Within the requested radius
+        in_radius = [h for h in scored if h["distance_km"] <= max_rad * 1.5]
+        in_radius.sort(key=lambda x: x["distance_km"])
+
+        # If user is in a different city/region, query real OpenStreetMap facilities!
+        if len(in_radius) < count:
+            try:
+                from backend.routes.nearby_hospitals import fetch_real_osm_hospitals
+                osm_facs = fetch_real_osm_hospitals(u_lat, u_lng, radius=int(max_rad * 1000))
+                for of in osm_facs:
+                    if of.get("type") in ("hospital", "clinic") or "hospital" in of.get("name", "").lower():
+                        d = calculate_haversine_distance(u_lat, u_lng, float(of["lat"]), float(of["lng"]))
+                        if not any(x["name"].lower() == of["name"].lower() for x in in_radius):
+                            in_radius.append({
+                                "name": of["name"],
+                                "location": of.get("address", f"{u_lat:.4f}°N, {u_lng:.4f}°E"),
+                                "short_location": of.get("address", "Nearby Medical Center"),
+                                "taluk": "Local Vicinity",
+                                "district": "Live Region",
+                                "type": "Hospital" if of.get("type") == "hospital" else "Clinic",
+                                "latitude": float(of["lat"]),
+                                "longitude": float(of["lng"]),
+                                "distance_km": d,
+                                "hfr_id": str(of.get("osm_id", ""))
+                            })
+                in_radius.sort(key=lambda x: x["distance_km"])
+            except Exception:
+                pass
+
+        # If in_radius still has fewer than count, supplement with realistic nearby local facilities
+        if len(in_radius) < count and user_lat is not None and user_lng is not None:
+            synth_presets = [
+                ("Metro District General Hospital", "Government", 1.8),
+                ("Apex Regional Medical Center", "Private", 3.2),
+                ("Community Health Care Center", "Government", 4.5),
+                ("Lifeline Super Specialty Hospital", "Private", 6.1),
+                ("City Emergency Trauma Care", "Government", 7.8),
+                ("Sunrise Multispeciality Clinic", "Private", 9.4)
+            ]
+            for s_name, s_type, s_dist in synth_presets:
+                if len(in_radius) >= count:
+                    break
+                if not any(x["name"].lower() == s_name.lower() for x in in_radius):
+                    d_lat = (s_dist / 111.0) * 0.707
+                    d_lng = (s_dist / (111.0 * max(0.2, math.cos(math.radians(u_lat))))) * 0.707
+                    in_radius.append({
+                        "name": s_name,
+                        "location": f"Regional Healthcare Hub ({round(u_lat + d_lat, 4)}°N, {round(u_lng + d_lng, 4)}°E)",
+                        "short_location": f"Local Vicinity (~{s_dist} km)",
+                        "taluk": "Local Hub",
+                        "district": "Live Region",
+                        "type": s_type,
+                        "latitude": round(u_lat + d_lat, 6),
+                        "longitude": round(u_lng + d_lng, 6),
+                        "distance_km": round(s_dist, 2),
+                        "hfr_id": f"GEN-{random.randint(100000, 999999)}"
+                    })
+
+        if in_radius:
+            selected_configs = in_radius[:count]
+        elif scored:
+            scored.sort(key=lambda x: x["distance_km"])
+            selected_configs = scored[:count]
+
+    # Priority 3: Filter by specific Taluk
     if not selected_configs and taluk and taluk.lower() not in ("all", "all dakshina kannada", "all taluks"):
         taluk_hospitals = [h for h in dk_hospitals if h.get("taluk", "").lower() == taluk.lower()]
         if len(taluk_hospitals) >= count:
             selected_configs = random.sample(taluk_hospitals, count)
         elif taluk_hospitals:
-            # Take all in this taluk, fill remainder from general DK network
+            # Take all in this taluk, fill remainder from general network
             remaining_needed = count - len(taluk_hospitals)
             other_hospitals = [h for h in dk_hospitals if h not in taluk_hospitals]
             supplement = random.sample(other_hospitals, min(remaining_needed, len(other_hospitals)))
             selected_configs = taluk_hospitals + supplement
 
-    # Priority 3: Default or cross-district selection
+    # Priority 4: Default or cross-district selection
     if not selected_configs:
         is_all_corridor = not taluk or taluk.lower() in ("all", "all dakshina kannada", "all taluks")
         if (is_all_corridor and count == 3) or seed == 1 or len(dk_hospitals) < 3:
@@ -210,11 +301,13 @@ def generate_hospitals(
                 if len(diverse_sample) < k:
                     diverse_sample.append(random.choice(taluk_groups[t]))
 
-            # Fill up if needed
-            while len(diverse_sample) < k:
-                candidate = random.choice(dk_hospitals)
-                if candidate not in diverse_sample:
-                    diverse_sample.append(candidate)
+            # Fill up if needed without infinite loop
+            if len(diverse_sample) < k:
+                remaining_needed = k - len(diverse_sample)
+                seen_names = {x["name"] for x in diverse_sample}
+                candidates = [h for h in dk_hospitals if h["name"] not in seen_names]
+                if candidates:
+                    diverse_sample.extend(random.sample(candidates, min(remaining_needed, len(candidates))))
 
             selected_configs = diverse_sample
 
@@ -231,16 +324,21 @@ def generate_hospitals(
             # Threshold: 300-600 units (safety stock buffer)
             thresholds[medicine] = random.randint(300, 600)
 
+        dist_km = hospital_config.get("distance_km")
+        if dist_km is None and user_lat is not None and user_lng is not None and hospital_config.get("latitude") and hospital_config.get("longitude"):
+            dist_km = calculate_haversine_distance(float(user_lat), float(user_lng), float(hospital_config["latitude"]), float(hospital_config["longitude"]))
+
         agent = HospitalAgent(
             name=hospital_config["name"],
             location=hospital_config.get("short_location") or hospital_config.get("location", ""),
             inventory=inventory,
             thresholds=thresholds,
-            taluk=hospital_config.get("taluk", "Dakshina Kannada"),
+            taluk=hospital_config.get("taluk", "Nearby"),
             hospital_type=hospital_config.get("type", "Government"),
             latitude=hospital_config.get("latitude"),
             longitude=hospital_config.get("longitude"),
-            hfr_id=hospital_config.get("hfr_id", "")
+            hfr_id=hospital_config.get("hfr_id", ""),
+            distance_km=dist_km
         )
         agents.append(agent)
 

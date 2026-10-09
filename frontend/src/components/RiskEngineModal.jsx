@@ -28,10 +28,20 @@ export default function RiskEngineModal({
   isOpen,
   onClose,
   onTriggerRequisition,
-  initialHospital = "City General Hospital",
-  initialMedicine = "Paracetamol"
+  initialHospital,
+  initialMedicine = "Paracetamol",
+  hospitals = []
 }) {
-  const [selectedHospital, setSelectedHospital] = useState(initialHospital);
+  const activeHospitalList = useMemo(() => {
+    if (hospitals && hospitals.length > 0) {
+      return hospitals.map(h => typeof h === 'string' ? h : h.name);
+    }
+    return HOSPITALS;
+  }, [hospitals]);
+
+  const [selectedHospital, setSelectedHospital] = useState(
+    initialHospital || (hospitals[0]?.name || HOSPITALS[0])
+  );
   const [selectedMedicine, setSelectedMedicine] = useState(initialMedicine);
   const [activeRiskTab, setActiveRiskTab] = useState("ALL"); // ALL, CRITICAL, HIGH, WATCH, STABLE
   const [riskData, setRiskData] = useState(null);
@@ -39,9 +49,16 @@ export default function RiskEngineModal({
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (initialHospital) setSelectedHospital(initialHospital);
+    if (initialHospital && activeHospitalList.includes(initialHospital)) {
+      setSelectedHospital(initialHospital);
+    } else if (activeHospitalList.length > 0 && !activeHospitalList.includes(selectedHospital)) {
+      setSelectedHospital(activeHospitalList[0]);
+    }
+  }, [initialHospital, activeHospitalList]);
+
+  useEffect(() => {
     if (initialMedicine) setSelectedMedicine(initialMedicine);
-  }, [initialHospital, initialMedicine]);
+  }, [initialMedicine]);
 
   const loadData = async () => {
     setLoading(true);
@@ -121,9 +138,17 @@ export default function RiskEngineModal({
               value={selectedHospital}
               onChange={(e) => setSelectedHospital(e.target.value)}
             >
-              {HOSPITALS.map(h => (
-                <option key={h} value={h}>{h}</option>
-              ))}
+              {activeHospitalList.map(hName => {
+                const hospObj = hospitals?.find(x => (x.name || x) === hName);
+                const distLabel = hospObj?.distance_km != null 
+                  ? ` (📍 ${typeof hospObj.distance_km === 'number' ? hospObj.distance_km.toFixed(1) : hospObj.distance_km} km)` 
+                  : '';
+                return (
+                  <option key={hName} value={hName}>
+                    {hName}{distLabel}
+                  </option>
+                );
+              })}
             </select>
           </div>
 

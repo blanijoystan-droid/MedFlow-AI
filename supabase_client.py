@@ -127,8 +127,16 @@ def save_trade_record(trade_data: Dict[str, Any]) -> bool:
             "status": trade_data.get("status", "APPROVED"),
             "timestamp": trade_data.get("timestamp")
         }
-        client.table("trade_history").insert(record).execute()
-        return True
+        try:
+            client.table("trade_history").insert(record).execute()
+            return True
+        except Exception as insert_err:
+            # Fallback if counter_medicines column is not in Supabase schema
+            if "counter_medicines" in record:
+                record.pop("counter_medicines", None)
+                client.table("trade_history").insert(record).execute()
+                return True
+            raise insert_err
     except Exception as e:
         print(f"Error saving trade record to Supabase: {e}")
         return False

@@ -74,28 +74,13 @@ export default function Navbar({
             </span>
           </div>
           <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginTop: '0.15rem' }}>
-            Autonomous Medical Supply Coordinator • Dakshina Kannada Corridor & Emergency Requisition
+            Autonomous Medical Supply Coordinator • Live Regional Network & Emergency Requisition
           </p>
         </div>
       </div>
 
       {/* Action Controls & Healthcare System Stats */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-        {/* District Corridor Pill */}
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '0.4rem',
-          padding: '0.45rem 0.85rem',
-          borderRadius: 'var(--radius-md)',
-          background: 'var(--bg-surface)',
-          border: '1px solid var(--border-subtle)',
-          fontSize: '0.82rem',
-          color: 'var(--text-secondary)'
-        }}>
-          <MapPin size={15} color="#06b6d4" />
-          <span style={{ fontWeight: '600' }}>Dakshina Kannada Corridor</span>
-        </div>
 
         {/* Scenario Pill */}
         <div style={{
@@ -243,30 +228,6 @@ export default function Navbar({
           <FindMedicineButton onClick={onOpenFindMedicine} label="🗺️ Emergency Map" />
         )}
 
-        {/* AI Key Status Button */}
-        <button 
-          onClick={onOpenKeyModal}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '0.45rem',
-            padding: '0.45rem 0.85rem',
-            borderRadius: 'var(--radius-md)',
-            background: isKeyConfigured ? 'var(--emerald-50)' : 'var(--rose-50)',
-            border: `1px solid ${isKeyConfigured ? 'var(--emerald-100)' : 'var(--rose-100)'}`,
-            color: isKeyConfigured ? 'var(--emerald-700)' : 'var(--rose-700)',
-            fontSize: '0.82rem',
-            fontWeight: '600',
-            cursor: 'pointer',
-            transition: 'all 0.2s ease'
-          }}
-          title={isKeyConfigured ? "Gemini AI is active and responding" : "Click to set API Key"}
-          id="btn-navbar-key"
-        >
-          {isKeyConfigured ? <ShieldCheck size={16} /> : <AlertCircle size={16} />}
-          <span>{isKeyConfigured ? 'Gemini AI Active' : 'Configure API Key'}</span>
-          <Key size={13} style={{ opacity: 0.6 }} />
-        </button>
 
         {/* New Scenario Button */}
         <button

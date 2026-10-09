@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Optional, Dict, Any, List
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from pydantic import BaseModel
@@ -75,12 +75,16 @@ class ScenarioRequest(BaseModel):
     taluk: Optional[str] = None
     count: Optional[int] = 3
     hospital_names: Optional[List[str]] = None
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+    radius_km: Optional[float] = 15.0
+    location_label: Optional[str] = None
 
 class ChatRequest(BaseModel):
     question: str
 
 def format_hospitals_data():
-    """Serialize hospital agents for JSON response including Dakshina Kannada metadata."""
+    """Serialize hospital agents for JSON response including live distance metadata."""
     result = []
     for hospital in state.hospitals:
         shortages = hospital.detect_shortages()
@@ -100,10 +104,11 @@ def format_hospitals_data():
         result.append({
             "name": hospital.name,
             "location": hospital.location,
-            "taluk": getattr(hospital, "taluk", "Dakshina Kannada"),
+            "taluk": getattr(hospital, "taluk", "Nearby"),
             "type": getattr(hospital, "hospital_type", "Government"),
             "latitude": getattr(hospital, "latitude", None),
             "longitude": getattr(hospital, "longitude", None),
+            "distance_km": getattr(hospital, "distance_km", None),
             "hfr_id": getattr(hospital, "hfr_id", ""),
             "inventory": hospital.inventory,
             "thresholds": hospital.thresholds,
@@ -248,24 +253,49 @@ def get_dakshina_kannada_taluks():
     }
 
 @app.get("/api/hospitals")
-def get_hospitals():
-    """Retrieve the current state of all hospitals in the network."""
+def get_hospitals(
+    lat: Optional[float] = Query(None),
+    lng: Optional[float] = Query(None),
+    radius_km: Optional[float] = Query(None)
+):
+    """Retrieve the current state of all hospitals in the network, optionally filtered by live location."""
+    if lat is not None and lng is not None:
+        state.reset_scenario(
+            count=state.active_count,
+            lat=lat,
+            lng=lng,
+            radius_km=radius_km or 15.0
+        )
     return {
         "scenario_count": state.scenario_count,
         "active_taluk": state.active_taluk or "All",
+        "user_location": state.user_location,
         "hospitals": format_hospitals_data()
     }
 
 @app.post("/api/scenario/new")
 def new_scenario(req: Optional[ScenarioRequest] = None):
-    """Generate a brand new random hospital network crisis scenario in Dakshina Kannada."""
+    """Generate a brand new random hospital network crisis scenario filtered by live location."""
     taluk = req.taluk if req else None
     count = req.count if req and req.count else 3
     hospital_names = req.hospital_names if req else None
-    state.reset_scenario(taluk=taluk, count=count, hospital_names=hospital_names)
+    lat = req.lat if req else None
+    lng = req.lng if req else None
+    radius_km = req.radius_km if req else 15.0
+    location_label = req.location_label if req else None
+    state.reset_scenario(
+        taluk=taluk,
+        count=count,
+        hospital_names=hospital_names,
+        lat=lat,
+        lng=lng,
+        radius_km=radius_km,
+        location_label=location_label
+    )
     return {
         "scenario_count": state.scenario_count,
         "active_taluk": state.active_taluk or "All",
+        "user_location": state.user_location,
         "hospitals": format_hospitals_data(),
         "events": state.events,
         "pending_trade": state.pending_trade

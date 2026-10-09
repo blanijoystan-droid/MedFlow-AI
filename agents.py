@@ -133,7 +133,8 @@ class HospitalAgent:
         hospital_type: str = "Government",
         latitude: Optional[float] = None,
         longitude: Optional[float] = None,
-        hfr_id: str = ""
+        hfr_id: str = "",
+        distance_km: Optional[float] = None
     ):
         """
         Initialize a hospital agent.
@@ -148,6 +149,7 @@ class HospitalAgent:
             latitude: Geographic latitude coordinate
             longitude: Geographic longitude coordinate
             hfr_id: Health Facility Registry ID
+            distance_km: Geodesic distance in kilometers from user's live position
         """
         self.name = name
         self.location = location
@@ -156,6 +158,7 @@ class HospitalAgent:
         self.latitude = latitude
         self.longitude = longitude
         self.hfr_id = hfr_id
+        self.distance_km = distance_km
         # Coordinates (lat, lng) for geospatial mapping
         if latitude is not None and longitude is not None:
             self.coords = (latitude, longitude)
@@ -362,6 +365,9 @@ class HospitalAgent:
         try:
             response = ask_gemini(system_prompt, user_prompt, json_schema=json_schema)
             if isinstance(response, dict) and "message" in response:
+                response["requested_medicine"] = shortage["medicine"]
+                response["requested_quantity"] = shortage["deficit"]
+                response["shortage"] = shortage
                 return response
         except Exception as e:
             if ENABLE_DEBUG_LOGGING:
@@ -376,7 +382,10 @@ class HospitalAgent:
         return {
             "message": f"🚨 EMERGENCY REQUEST: {self.name} is facing an urgent deficit of {shortage['deficit']} units of {shortage['medicine']} (current: {shortage['current']}, safety threshold: {shortage['threshold']}). We request an emergency supply transfer from network hospitals.",
             "offers": offers,
-            "reasoning": f"Critical deficit detected: Stock is at {shortage.get('percentage', 0)}% of required reserve buffer. Reallocating available surpluses ({', '.join(f'{k}: {v}' for k, v in offers.items()) or 'None'}) to facilitate balanced inter-hospital support."
+            "reasoning": f"Critical deficit detected: Stock is at {shortage.get('percentage', 0)}% of required reserve buffer. Reallocating available surpluses ({', '.join(f'{k}: {v}' for k, v in offers.items()) or 'None'}) to facilitate balanced inter-hospital support.",
+            "requested_medicine": shortage["medicine"],
+            "requested_quantity": shortage["deficit"],
+            "shortage": shortage
         }
 
     def evaluate_request(self, request: dict, requester_name: str, requester_location: str = "Unknown") -> dict:
@@ -446,32 +455,78 @@ class HospitalAgent:
             "required": ["decision", "message", "reasoning"]
         }
 
+        # Determine requested medicine and quantity
+        req_med = request.get("requested_medicine")
+        req_qty = request.get("requested_quantity")
+        if not req_med:
+            req_msg = request.get("message", "").lower()
+            for med in self.inventory:
+                if med.lower() in req_msg:
+                    req_med = med
+                    break
+        if req_qty is None or not isinstance(req_qty, (int, float)):
+            req_qty = 0
+            if req_med and request.get("message"):
+                import re
+                m = re.search(r'(\d+)\s*(?:units|doses)?\s*(?:of\s+)?' + re.escape(req_med), request.get("message", ""), re.IGNORECASE)
+                if m:
+                    try:
+                        req_qty = int(m.group(1))
+                    except ValueError:
+                        pass
+
         try:
-            response = ask_gemini(system_prompt, user_prompt, json_schema=json_schema)
-            if isinstance(response, dict) and "decision" in response:
+            raw_response = ask_gemini(system_prompt, user_prompt, json_schema=json_schema)
+            if isinstance(raw_response, dict) and "decision" in raw_response:
+                response = dict(raw_response)
+                # GROUND TRUTH CLINICAL SAFETY VALIDATION & ARITHMETIC RECTIFICATION
+                if req_med:
+                    surplus = self.compute_surplus(req_med)
+                    target_qty = int(req_qty) if req_qty and req_qty > 0 else surplus
+
+                    # Case 1: Responder has enough surplus, but LLM hallucinated 'reject'
+                    if surplus >= target_qty and target_qty > 0 and response.get("decision") == "reject":
+                        response["decision"] = "accept"
+                        response["message"] = f"✅ {self.name} verifies clinical clearance: We hold {self.inventory[req_med]} units of {req_med} against {self.thresholds[req_med]} safety threshold (+{surplus} surplus). We accept and approve transfer of {target_qty} units to {requester_name}."
+                        response["reasoning"] = f"Mathematical surplus safety verified: Fulfilling {target_qty} units leaves {self.inventory[req_med] - target_qty} units, remaining safely above our threshold of {self.thresholds[req_med]}."
+                        response["counter_offer"] = None
+
+                    # Case 2: Responder has partial surplus (0 < surplus < target_qty) and LLM hallucinated 'reject'
+                    elif 0 < surplus < target_qty and response.get("decision") == "reject":
+                        response["decision"] = "counter"
+                        response["message"] = f"🔄 {self.name} cannot spare the entire {target_qty} units without breaching safety thresholds, but proposes a partial emergency allocation of {surplus} units of {req_med}."
+                        response["reasoning"] = f"Partial surplus fulfillment: Allocating {surplus} units safely retains our {self.thresholds[req_med]} reserve buffer while providing immediate relief to {requester_name}."
+                        response["counter_offer"] = {req_med: surplus}
+
+                    # Case 3: Responder accepted but possesses 0 surplus -> revert to reject to guarantee safety
+                    elif surplus <= 0 and response.get("decision") == "accept":
+                        response["decision"] = "reject"
+                        response["message"] = f"❌ {self.name} cannot safely fulfill this transfer without breaching mandatory patient safety reserves."
+                        response["reasoning"] = f"Safety threshold enforcement: Local stock of {req_med} ({self.inventory[req_med]}) is at or below threshold ({self.thresholds[req_med]})."
+                        response["counter_offer"] = None
+
                 return response
         except Exception as e:
             if ENABLE_DEBUG_LOGGING:
                 print(f"⚠️ Gemini evaluate_request fallback triggered: {e}")
 
         # Intelligent Autonomous Heuristic Evaluation Fallback
-        # Find which medicine is requested from the message
-        req_msg = request.get("message", "").lower()
-        requested_med = None
-        for med in self.inventory:
-            if med.lower() in req_msg:
-                requested_med = med
-                break
-
-        # Check if we have safe surplus of the requested medicine
-        if requested_med:
-            surplus = self.compute_surplus(requested_med)
-            if surplus > 0:
+        if req_med:
+            surplus = self.compute_surplus(req_med)
+            target_qty = int(req_qty) if req_qty and req_qty > 0 else surplus
+            if surplus >= target_qty and target_qty > 0:
                 return {
                     "decision": "accept",
-                    "message": f"✅ {self.name} confirms availability of {surplus} units of surplus {requested_med}. Safe to transfer to {requester_name} without impacting local patient reserves.",
-                    "reasoning": f"Local stock ({self.inventory[requested_med]}) exceeds threshold ({self.thresholds[requested_med]}) by {surplus} units. Transfer meets strict clinical safety margins.",
+                    "message": f"✅ {self.name} confirms availability of {target_qty} units of surplus {req_med}. Safe to transfer to {requester_name} without impacting local patient reserves.",
+                    "reasoning": f"Local stock ({self.inventory[req_med]}) exceeds threshold ({self.thresholds[req_med]}) by {surplus} units. Transfer meets strict clinical safety margins.",
                     "counter_offer": None
+                }
+            elif surplus > 0:
+                return {
+                    "decision": "counter",
+                    "message": f"🔄 {self.name} cannot spare the entire {target_qty} units, but offers a partial allocation of {surplus} units of {req_med}.",
+                    "reasoning": f"Partial fulfillment: Transferring {surplus} units safely maintains {self.thresholds[req_med]} reserve.",
+                    "counter_offer": {req_med: surplus}
                 }
 
         # Check if we can make a beneficial counter offer
