@@ -40,11 +40,11 @@ export async function sendMedicineRequest(payload) {
 }
 
 export async function fetchNearbyHospitals(
-  medicine = "Paracetamol", 
-  minQuantity = 0, 
-  lat = 12.3082, 
-  lng = 76.6432, 
-  radiusKm = 15, 
+  medicine = "Paracetamol",
+  minQuantity = 0,
+  lat = 12.3082,
+  lng = 76.6432,
+  radiusKm = 15,
   facilityType = "all"
 ) {
   const query = `?medicine=${encodeURIComponent(medicine)}&min_quantity=${minQuantity}&lat=${lat}&lng=${lng}&radius_km=${radiusKm}&facility_type=${facilityType}`;
@@ -85,6 +85,50 @@ export async function searchOsmLocations(query) {
   }
 }
 
+export async function getExactBrowserCoordinates() {
+  if (typeof window === 'undefined' || !navigator.geolocation) {
+    throw new Error("Geolocation is not supported by this browser.");
+  }
+
+  // Tier 1: Try high accuracy (GPS/WiFi triangulation) with 15s timeout and 0 cache age
+  const tryPosition = (enableHighAccuracy, timeoutMs) => {
+    return new Promise((resolve, reject) => {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => resolve(pos),
+        (err) => reject(err),
+        {
+          enableHighAccuracy,
+          timeout: timeoutMs,
+          maximumAge: 0
+        }
+      );
+    });
+  };
+
+  try {
+    const pos = await tryPosition(true, 15000);
+    return {
+      lat: pos.coords.latitude,
+      lng: pos.coords.longitude,
+      accuracy: pos.coords.accuracy,
+      source: 'Device GPS (High Accuracy)'
+    };
+  } catch (errHigh) {
+    console.warn("High accuracy geolocation timed out or failed, falling back to standard accuracy:", errHigh);
+    try {
+      const pos = await tryPosition(false, 10000);
+      return {
+        lat: pos.coords.latitude,
+        lng: pos.coords.longitude,
+        accuracy: pos.coords.accuracy,
+        source: 'Browser Geolocation (Standard)'
+      };
+    } catch (errStandard) {
+      throw errStandard;
+    }
+  }
+}
+
 export async function detectLiveLocation() {
   try {
     const res = await fetch(getApiUrl('/api/detect-location'));
@@ -95,7 +139,7 @@ export async function detectLiveLocation() {
       try {
         const fallbackRes = await fetch('http://localhost:8000/api/detect-location');
         return await fallbackRes.json();
-      } catch (e) {}
+      } catch (e) { }
     }
     return { success: false, lat: 12.9187, lng: 74.8598, city: "Mangaluru" };
   }
@@ -111,9 +155,13 @@ export async function reverseGeocodeOsm(lat, lng) {
       try {
         const fallbackRes = await fetch(`http://localhost:8000/api/osm-reverse-geocode?lat=${lat}&lng=${lng}`);
         return await fallbackRes.json();
-      } catch (e) {}
+      } catch (e) { }
     }
-    return { short_name: `${lat.toFixed(4)}°N, ${lng.toFixed(4)}°E` };
+    return { 
+      short_name: `${lat.toFixed(4)}°N, ${lng.toFixed(4)}°E`,
+      display_name: `${lat.toFixed(4)}°N, ${lng.toFixed(4)}°E`,
+      locality: `${lat.toFixed(4)}°N, ${lng.toFixed(4)}°E`
+    };
   }
 }
 

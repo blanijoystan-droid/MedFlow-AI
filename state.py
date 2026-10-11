@@ -11,10 +11,21 @@ from data import generate_hospitals
 
 class SystemState:
     def __init__(self):
-        self.active_taluk: Optional[str] = "All"
+        self.active_taluk: Optional[str] = "Bantwal"
         self.active_count: int = 3
-        self.user_location: Optional[Dict[str, Any]] = None
-        self.hospitals = generate_hospitals()
+        self.user_location: Optional[Dict[str, Any]] = {
+            "lat": 12.8630,
+            "lng": 75.0505,
+            "label": "Bolangadi, Melkar (Bantwal Taluk)",
+            "radius_km": 15.0
+        }
+        self.hospitals = generate_hospitals(
+            taluk="Bantwal",
+            count=3,
+            user_lat=12.8630,
+            user_lng=75.0505,
+            radius_km=15.0
+        )
         self.events: List[Dict[str, Any]] = []
         self.pending_trade: Optional[Dict[str, Any]] = None
         self.trade_history: List[Dict[str, Any]] = []
