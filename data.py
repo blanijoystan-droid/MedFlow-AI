@@ -95,8 +95,7 @@ def get_hospitals_by_taluk(taluk: Optional[str] = None) -> List[Dict[str, Any]]:
         return all_h
     return [h for h in all_h if h.get("taluk", "").lower() == taluk.lower()]
 
-# Anchor 3 prominent hospitals for default reproducible setup
-DEFAULT_HOSPITALS_CONFIG = [
+DEFAULT_HOSPITALS_CONFIG: List[Dict[str, Any]] = [
     {
         "name": "Wenlock District Hospital",
         "location": "Mangalore, Dakshina Kannada",
@@ -183,7 +182,7 @@ def generate_hospitals(
 
     dk_hospitals = load_dakshina_kannada_hospitals()
 
-    selected_configs = []
+    selected_configs: List[Dict[str, Any]] = []
 
     # Priority 1: User specified explicit hospital names
     if hospital_names:
@@ -195,7 +194,7 @@ def generate_hospitals(
         u_lng = float(user_lng)
         max_rad = float(radius_km) if radius_km else 25.0
 
-        # Calculate distances to pre-cached verified facilities
+        # Calculate distances to all verified real Dakshina Kannada facilities
         scored = []
         for h in dk_hospitals:
             if h.get("latitude") and h.get("longitude"):
@@ -204,69 +203,24 @@ def generate_hospitals(
                 h_copy["distance_km"] = d
                 scored.append(h_copy)
 
-        # Within the requested radius
-        in_radius = [h for h in scored if h["distance_km"] <= max_rad * 1.5]
-        in_radius.sort(key=lambda x: x["distance_km"])
+        scored.sort(key=lambda x: x["distance_km"])
 
-        # If user is in a different city/region, query real OpenStreetMap facilities!
-        if len(in_radius) < count:
-            try:
-                from backend.routes.nearby_hospitals import fetch_real_osm_hospitals
-                osm_facs = fetch_real_osm_hospitals(u_lat, u_lng, radius=int(max_rad * 1000))
-                for of in osm_facs:
-                    if of.get("type") in ("hospital", "clinic") or "hospital" in of.get("name", "").lower():
-                        d = calculate_haversine_distance(u_lat, u_lng, float(of["lat"]), float(of["lng"]))
-                        if not any(x["name"].lower() == of["name"].lower() for x in in_radius):
-                            in_radius.append({
-                                "name": of["name"],
-                                "location": of.get("address", f"{u_lat:.4f}°N, {u_lng:.4f}°E"),
-                                "short_location": of.get("address", "Nearby Medical Center"),
-                                "taluk": "Local Vicinity",
-                                "district": "Live Region",
-                                "type": "Hospital" if of.get("type") == "hospital" else "Clinic",
-                                "latitude": float(of["lat"]),
-                                "longitude": float(of["lng"]),
-                                "distance_km": d,
-                                "hfr_id": str(of.get("osm_id", ""))
-                            })
-                in_radius.sort(key=lambda x: x["distance_km"])
-            except Exception:
-                pass
+        # Check if user coordinates are in/near Dakshina Kannada district (< 80 km)
+        is_near_district = scored and scored[0]["distance_km"] <= 80.0
 
-        # If in_radius still has fewer than count, supplement with realistic nearby local facilities
-        if len(in_radius) < count and user_lat is not None and user_lng is not None:
-            synth_presets = [
-                ("Metro District General Hospital", "Government", 1.8),
-                ("Apex Regional Medical Center", "Private", 3.2),
-                ("Community Health Care Center", "Government", 4.5),
-                ("Lifeline Super Specialty Hospital", "Private", 6.1),
-                ("City Emergency Trauma Care", "Government", 7.8),
-                ("Sunrise Multispeciality Clinic", "Private", 9.4)
-            ]
-            for s_name, s_type, s_dist in synth_presets:
-                if len(in_radius) >= count:
-                    break
-                if not any(x["name"].lower() == s_name.lower() for x in in_radius):
-                    d_lat = (s_dist / 111.0) * 0.707
-                    d_lng = (s_dist / (111.0 * max(0.2, math.cos(math.radians(u_lat))))) * 0.707
-                    in_radius.append({
-                        "name": s_name,
-                        "location": f"Regional Healthcare Hub ({round(u_lat + d_lat, 4)}°N, {round(u_lng + d_lng, 4)}°E)",
-                        "short_location": f"Local Vicinity (~{s_dist} km)",
-                        "taluk": "Local Hub",
-                        "district": "Live Region",
-                        "type": s_type,
-                        "latitude": round(u_lat + d_lat, 6),
-                        "longitude": round(u_lng + d_lng, 6),
-                        "distance_km": round(s_dist, 2),
-                        "hfr_id": f"GEN-{random.randint(100000, 999999)}"
-                    })
-
-        if in_radius:
-            selected_configs = in_radius[:count]
-        elif scored:
-            scored.sort(key=lambda x: x["distance_km"])
-            selected_configs = scored[:count]
+        if is_near_district:
+            in_radius = [h for h in scored if h["distance_km"] <= max_rad * 1.5]
+            if len(in_radius) >= count:
+                selected_configs = in_radius[:count]
+            else:
+                selected_configs = scored[:count]
+        else:
+            # If coordinates are outside district (e.g. desktop WiFi glitch or cloud datacenter),
+            # strictly protect the system and anchor to Dakshina Kannada core network
+            core_names = ["Bantwal Taluka Hospital", "Wenlock District Hospital", "SDM Hospital"]
+            selected_configs = [h for h in dk_hospitals if h["name"] in core_names]
+            if len(selected_configs) < count:
+                selected_configs = dk_hospitals[:count]
 
     # Priority 3: Filter by specific Taluk
     if not selected_configs and taluk and taluk.lower() not in ("all", "all dakshina kannada", "all taluks"):
@@ -324,20 +278,29 @@ def generate_hospitals(
             # Threshold: 300-600 units (safety stock buffer)
             thresholds[medicine] = random.randint(300, 600)
 
-        dist_km = hospital_config.get("distance_km")
-        if dist_km is None and user_lat is not None and user_lng is not None and hospital_config.get("latitude") and hospital_config.get("longitude"):
-            dist_km = calculate_haversine_distance(float(user_lat), float(user_lng), float(hospital_config["latitude"]), float(hospital_config["longitude"]))
+        raw_dist = hospital_config.get("distance_km")
+        if raw_dist is None and user_lat is not None and user_lng is not None and hospital_config.get("latitude") and hospital_config.get("longitude"):
+            dist_km: Optional[float] = calculate_haversine_distance(
+                float(user_lat), float(user_lng), float(hospital_config["latitude"]), float(hospital_config["longitude"])
+            )
+        else:
+            dist_km = float(raw_dist) if raw_dist is not None else None
+
+        lat_val = hospital_config.get("latitude")
+        lng_val = hospital_config.get("longitude")
+        lat = float(lat_val) if lat_val is not None else None
+        lng = float(lng_val) if lng_val is not None else None
 
         agent = HospitalAgent(
-            name=hospital_config["name"],
-            location=hospital_config.get("short_location") or hospital_config.get("location", ""),
+            name=str(hospital_config["name"]),
+            location=str(hospital_config.get("short_location") or hospital_config.get("location", "")),
             inventory=inventory,
             thresholds=thresholds,
-            taluk=hospital_config.get("taluk", "Nearby"),
-            hospital_type=hospital_config.get("type", "Government"),
-            latitude=hospital_config.get("latitude"),
-            longitude=hospital_config.get("longitude"),
-            hfr_id=hospital_config.get("hfr_id", ""),
+            taluk=str(hospital_config.get("taluk", "Nearby")),
+            hospital_type=str(hospital_config.get("type", "Government")),
+            latitude=lat,
+            longitude=lng,
+            hfr_id=str(hospital_config.get("hfr_id", "")),
             distance_km=dist_km
         )
         agents.append(agent)

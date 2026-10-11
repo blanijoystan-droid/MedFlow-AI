@@ -10,6 +10,7 @@ Seed and Fetch Real Data from Supabase
 import os
 import sys
 from pathlib import Path
+from typing import Any
 import pandas as pd
 from dotenv import load_dotenv
 from supabase import create_client, Client
@@ -79,10 +80,12 @@ def seed_data():
     if CSV_FILE.exists():
         print(f"\n[1/4] Reading hospitals from '{CSV_FILE.name}'...")
         df_hosp = pd.read_csv(CSV_FILE)
-        df_hosp = df_hosp.where(pd.notnull(df_hosp), None)
         df_hosp["latitude"] = pd.to_numeric(df_hosp["latitude"], errors="coerce")
         df_hosp["longitude"] = pd.to_numeric(df_hosp["longitude"], errors="coerce")
-        records_hosp = df_hosp.to_dict(orient="records")
+        records_hosp: list[dict[str, Any]] = [
+            {str(k): (None if pd.isna(v) else v) for k, v in row.items()}
+            for row in df_hosp.to_dict(orient="records")
+        ]
 
         try:
             res = supabase.table("hospitals").upsert(records_hosp, on_conflict="hfr_id").execute()

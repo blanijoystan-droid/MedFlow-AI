@@ -27,13 +27,13 @@ export default function App() {
   const [reasoningData, setReasoningData] = useState({ logs: [], stats: {} });
   const [medicineRequests, setMedicineRequests] = useState([]);
 
-  // Live geographic position & radius filtering state
+  // Live geographic position & radius filtering state (Anchored to Bantwal Home)
   const [userLocation, setUserLocation] = useState({
-    lat: 12.8649,
-    lng: 74.8360,
-    label: 'Detecting Location...',
-    city: 'Detecting...',
-    source: 'Live GPS/IP',
+    lat: 12.893750,
+    lng: 75.041410,
+    label: 'Bantwal Home (Dakshina Kannada)',
+    city: 'Bantwal',
+    source: 'Bantwal Taluk Corridor',
     radiusKm: 15
   });
   const [isDetectingLocation, setIsDetectingLocation] = useState(false);
@@ -99,6 +99,16 @@ export default function App() {
       setDirectory(dirRes.hospitals || []);
       setTaluks(taluksRes.taluks || []);
       if (hospRes.active_taluk) setSelectedTaluk(hospRes.active_taluk);
+      if (hospRes.user_location) {
+        setUserLocation(prev => ({
+          ...prev,
+          lat: hospRes.user_location.lat ?? prev.lat,
+          lng: hospRes.user_location.lng ?? prev.lng,
+          label: hospRes.user_location.label || prev.label,
+          city: hospRes.user_location.label?.split(',')[0] || prev.city,
+          radiusKm: hospRes.user_location.radius_km || prev.radiusKm
+        }));
+      }
       setMedicineRequests(requestsRes.requests || []);
     } catch (err) {
       console.error("Failed to connect to MedFlow-AI backend:", err);
@@ -114,7 +124,41 @@ export default function App() {
     }
   };
 
-  // Auto-detect live position (Browser GPS with IP fallback)
+  // Anchor back to Dakshina Kannada Medical Network
+  const resetToDakshinaKannada = async () => {
+    const defaultLat = 12.864892;
+    const defaultLng = 74.835974;
+    const defaultLabel = 'Mangaluru Central (Dakshina Kannada)';
+    setUserLocation(prev => ({
+      ...prev,
+      lat: defaultLat,
+      lng: defaultLng,
+      label: defaultLabel,
+      city: 'Mangaluru',
+      source: 'District Health Corridor',
+      radiusKm: 15
+    }));
+    await handleNewScenario(null, nodeCount, null, defaultLat, defaultLng, 15, defaultLabel);
+  };
+
+  // Center directly on user's home in Bantwal Taluk
+  const setLocationToBantwal = async () => {
+    const bLat = 12.893750;
+    const bLng = 75.041410;
+    const bLabel = 'Bantwal Home (Dakshina Kannada)';
+    setUserLocation(prev => ({
+      ...prev,
+      lat: bLat,
+      lng: bLng,
+      label: bLabel,
+      city: 'Bantwal',
+      source: 'User Home Location',
+      radiusKm: 15
+    }));
+    await handleNewScenario('Bantwal', nodeCount, null, bLat, bLng, 15, bLabel);
+  };
+
+  // Live position detection with strict India geographical sanity bounds
   const detectLiveLocation = async (radiusOverride = null) => {
     setIsDetectingLocation(true);
     const radiusToUse = radiusOverride ?? userLocation.radiusKm ?? 15;
@@ -137,6 +181,18 @@ export default function App() {
         async (position) => {
           const lat = position.coords.latitude;
           const lng = position.coords.longitude;
+
+          // Strict Sanity Check: Ensure GPS coordinates are actually within India
+          // Prevents desktop WiFi glitch from placing users in Virac / Portland / foreign regions
+          const isInsideIndia = (lat >= 6.0 && lat <= 38.0 && lng >= 68.0 && lng <= 98.0);
+          if (!isInsideIndia) {
+            console.warn("Desktop WiFi GPS reported coordinates outside India:", lat, lng);
+            setErrorBanner("Device location reported inaccurate coordinates outside India. Re-anchored to Dakshina Kannada network.");
+            await resetToDakshinaKannada();
+            setIsDetectingLocation(false);
+            return;
+          }
+
           try {
             const revRes = await fetch(`/api/osm-reverse-geocode?lat=${lat}&lng=${lng}`).then(r => r.json());
             const label = revRes.locality || revRes.display_name?.split(',')[0] || `${lat.toFixed(4)}°N, ${lng.toFixed(4)}°E`;
@@ -148,7 +204,7 @@ export default function App() {
           setIsDetectingLocation(false);
         },
         async (err) => {
-          console.warn("Browser GPS unavailable, falling back to IP geolocation:", err);
+          console.warn("Browser GPS unavailable, falling back to verified network IP:", err);
           await detectViaIp(radiusToUse);
           setIsDetectingLocation(false);
         },
@@ -165,8 +221,16 @@ export default function App() {
       const res = await fetch('/api/detect-location').then(r => r.json());
       const lat = res.lat || 12.8649;
       const lng = res.lng || 74.8360;
-      const city = res.city || 'Regional Area';
-      const label = `${city}${res.region ? ', ' + res.region : ''}`;
+
+      // Sanity Check: Validate against India bounds
+      const isInsideIndia = (lat >= 6.0 && lat <= 38.0 && lng >= 68.0 && lng <= 98.0);
+      if (!isInsideIndia) {
+        await resetToDakshinaKannada();
+        return;
+      }
+
+      const city = res.city || 'Mangaluru';
+      const label = res.display_name || `${city}${res.region ? ', ' + res.region : ''}`;
       setUserLocation(prev => ({
         ...prev,
         lat,
@@ -179,16 +243,7 @@ export default function App() {
       await handleNewScenario(null, nodeCount, null, lat, lng, radiusToUse, label);
     } catch (e) {
       console.error("IP Geolocation failed:", e);
-      setUserLocation(prev => ({
-        ...prev,
-        lat: 12.8649,
-        lng: 74.8360,
-        label: 'Mangaluru Central',
-        city: 'Mangaluru',
-        source: 'Regional Hub',
-        radiusKm: radiusToUse
-      }));
-      await handleNewScenario(null, nodeCount, null, 12.8649, 74.8360, radiusToUse, 'Mangaluru Central');
+      await resetToDakshinaKannada();
     }
   };
 
@@ -227,8 +282,8 @@ export default function App() {
 
   useEffect(() => {
     const initializeApp = async () => {
+      // Boot up with authentic Dakshina Kannada network directory and hospital state
       await fetchAllData();
-      await detectLiveLocation();
     };
     initializeApp();
   }, []);
@@ -523,8 +578,8 @@ export default function App() {
             </button>
 
             {pendingTrade && (
-              <span 
-                className="badge badge-critical" 
+              <span
+                className="badge badge-critical"
                 onClick={() => document.getElementById('verification-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
                 style={{ fontSize: '0.78rem', padding: '0.35rem 0.75rem', animation: 'pulse 2s infinite', cursor: 'pointer' }}
               >
@@ -604,6 +659,35 @@ export default function App() {
               >
                 <MapPin size={14} color="#06b6d4" className={isDetectingLocation ? "spin" : ""} />
                 <span>{isDetectingLocation ? 'Locating...' : '🎯 My Live Location'}</span>
+              </button>
+
+              {/* Home in Bantwal Button */}
+              <button
+                className="btn btn-secondary"
+                onClick={() => setLocationToBantwal()}
+                disabled={loading}
+                style={{
+                  padding: '0.5rem 0.85rem',
+                  fontSize: '0.82rem',
+                  fontWeight: '700',
+                  background: userLocation.city === 'Bantwal' ? 'rgba(6, 182, 212, 0.22)' : undefined,
+                  borderColor: userLocation.city === 'Bantwal' ? 'var(--teal-500, #06b6d4)' : undefined,
+                  color: userLocation.city === 'Bantwal' ? 'var(--teal-400, #06b6d4)' : undefined
+                }}
+                title="Set location to your home in Bantwal Taluk (Dakshina Kannada)"
+              >
+                <span>🏠 Bantwal Home</span>
+              </button>
+
+              {/* Reset to Dakshina Kannada Network Button */}
+              <button
+                className="btn btn-secondary"
+                onClick={() => resetToDakshinaKannada()}
+                disabled={loading}
+                style={{ padding: '0.5rem 0.85rem', fontSize: '0.82rem' }}
+                title="Reset to Dakshina Kannada District Hospital Network (Mangaluru Central)"
+              >
+                <span>🏥 Dakshina Kannada Network</span>
               </button>
 
               {/* Node count toggle */}

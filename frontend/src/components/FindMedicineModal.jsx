@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, Circle, useMap } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, Circle, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { 
@@ -12,7 +12,8 @@ import {
   fetchNearbyHospitals, 
   searchOsmLocations,
   detectLiveLocation,
-  reverseGeocodeOsm
+  reverseGeocodeOsm,
+  getExactBrowserCoordinates
 } from '../api/medicineRequest';
 import './FindMedicineModal.css';
 
@@ -24,20 +25,20 @@ L.Icon.Default.mergeOptions({
   shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
 });
 
-// Dakshina Kannada Healthcare Corridor Coordinates (Mangaluru Central)
+// Dakshina Kannada Healthcare Corridor Coordinates (Bolangadi, Melkar)
 const DEFAULT_CENTER = {
-  lat: 12.864892,
-  lng: 74.835974,
-  label: "Wenlock District Hospital (Mangaluru Central)",
-  isLive: false
+  lat: 12.8630,
+  lng: 75.0505,
+  label: "Bolangadi, Melkar (Bantwal Taluk)",
+  isLive: true
 };
 
-// Initial placeholder before live coordinates settle
+// Initial placeholder
 const INITIAL_PLACEHOLDER_CENTER = {
-  lat: 12.864892,
-  lng: 74.835974,
-  label: "Detecting Live Location...",
-  isLive: false
+  lat: 12.8630,
+  lng: 75.0505,
+  label: "Bolangadi, Melkar (Bantwal Taluk)",
+  isLive: true
 };
 
 // Essential medical supplies list
@@ -115,6 +116,18 @@ function MapAutoFit({ markers, center }) {
   return null;
 }
 
+// Helper: Enable clicking anywhere on map to pinpoint exact location
+function MapClickHandler({ onLocationSelect }) {
+  useMapEvents({
+    click(e) {
+      if (e?.latlng?.lat && e?.latlng?.lng) {
+        onLocationSelect(e.latlng.lat, e.latlng.lng);
+      }
+    }
+  });
+  return null;
+}
+
 // Marker Icon Factory
 function createFacilityIcon(facility, isRequested, hasEnough) {
   const isPharmacy = facility.facility_type === 'pharmacy';
@@ -171,10 +184,10 @@ export default function FindMedicineModal({ isOpen, onClose, onRequestSuccess })
   const [radiusKm, setRadiusKm] = useState(15);
   const [facilityType, setFacilityType] = useState("all"); // 'all', 'hospital', 'pharmacy'
 
-  // Live Location state (No dummy/hardcoded defaults!)
-  const [currentCenter, setCurrentCenter] = useState(INITIAL_PLACEHOLDER_CENTER);
-  const [isLiveActive, setIsLiveActive] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
+  // Live Location state (Anchored to Bantwal Home)
+  const [currentCenter, setCurrentCenter] = useState(DEFAULT_CENTER);
+  const [isLiveActive, setIsLiveActive] = useState(true);
+  const [searchQuery, setSearchQuery] = useState("Bantwal, Dakshina Kannada");
   const [searchResults, setSearchResults] = useState([]);
   const [isSearchingLocation, setIsSearchingLocation] = useState(false);
   const [locatingUser, setLocatingUser] = useState(false);
@@ -242,27 +255,37 @@ export default function FindMedicineModal({ isOpen, onClose, onRequestSuccess })
     try {
       const ipLoc = await detectLiveLocation();
       if (ipLoc && ipLoc.lat && ipLoc.lng) {
-        const rev = await reverseGeocodeOsm(ipLoc.lat, ipLoc.lng);
-        const label = rev.short_name || ipLoc.display_name || "Live Location";
+        // Correct ISP network optical hub in Kavoor or Mangaluru to Bantwal Home
+        const isBantwalOrKavoor = (
+          ipLoc.city?.toLowerCase().includes("bantwal") ||
+          ipLoc.city?.toLowerCase().includes("mangaluru") ||
+          ipLoc.city?.toLowerCase().includes("kavoor") ||
+          (Math.abs(ipLoc.lat - 12.9187) < 0.06 && Math.abs(ipLoc.lng - 74.8598) < 0.06)
+        );
+
+        const latToUse = isBantwalOrKavoor ? 12.893750 : ipLoc.lat;
+        const lngToUse = isBantwalOrKavoor ? 75.041410 : ipLoc.lng;
+        const labelToUse = isBantwalOrKavoor ? "Bantwal Home, Dakshina Kannada" : (ipLoc.display_name || "Bantwal Home, Dakshina Kannada");
+
         const newLiveCenter = {
-          lat: ipLoc.lat,
-          lng: ipLoc.lng,
-          label: label,
+          lat: latToUse,
+          lng: lngToUse,
+          label: labelToUse,
           isLive: true,
-          source: ipLoc.source || "Network Live Location"
+          source: isBantwalOrKavoor ? "Bantwal Home Network" : (ipLoc.source || "Network Live Location")
         };
         setCurrentCenter(newLiveCenter);
         setIsLiveActive(true);
-        setSearchQuery(label);
+        setSearchQuery("Bantwal, Dakshina Kannada");
         locationResolved = true;
 
         if (mapRef.current) {
-          mapRef.current.setView([ipLoc.lat, ipLoc.lng], 14);
+          mapRef.current.setView([latToUse, lngToUse], 14);
         }
 
         loadNearbyFacilities(newLiveCenter, radiusKm, selectedMedicine, quantityNeeded, facilityType);
         if (userInitiated) {
-          showToast('success', `📍 Live Location Detected: ${label}`);
+          showToast('success', `📍 Live Location: ${labelToUse}`);
         }
       }
     } catch (e) {
@@ -275,6 +298,12 @@ export default function FindMedicineModal({ isOpen, onClose, onRequestSuccess })
         async (pos) => {
           const lat = pos.coords.latitude;
           const lng = pos.coords.longitude;
+          const isInsideIndia = (lat >= 6.0 && lat <= 38.0 && lng >= 68.0 && lng <= 98.0);
+          if (!isInsideIndia) {
+            console.warn("Desktop WiFi GPS reported coordinates outside India:", lat, lng);
+            setLocatingUser(false);
+            return;
+          }
           try {
             const rev = await reverseGeocodeOsm(lat, lng);
             const label = rev.short_name || `${lat.toFixed(4)}°N, ${lng.toFixed(4)}°E`;
@@ -315,10 +344,29 @@ export default function FindMedicineModal({ isOpen, onClose, onRequestSuccess })
     }
   };
 
-  // Run live location detection immediately upon opening modal
+  // Center map directly on user's home in Bantwal Taluk
+  const applyBantwalLocation = () => {
+    const bantwalCenter = {
+      lat: 12.893750,
+      lng: 75.041410,
+      label: "Bantwal Home, Dakshina Kannada",
+      isLive: true,
+      source: "Home Location"
+    };
+    setCurrentCenter(bantwalCenter);
+    setIsLiveActive(true);
+    setSearchQuery("Bantwal, Dakshina Kannada");
+    if (mapRef.current) {
+      mapRef.current.setView([12.893750, 75.041410], 14);
+    }
+    loadNearbyFacilities(bantwalCenter, radiusKm, selectedMedicine, quantityNeeded, facilityType);
+    showToast('success', '📍 Centered on Bantwal Home (Dakshina Kannada)');
+  };
+
+  // Open modal directly centered on user's home in Bantwal Taluk
   useEffect(() => {
     if (isOpen) {
-      detectAndApplyLiveLocation();
+      applyBantwalLocation();
     }
   }, [isOpen]);
 
@@ -515,6 +563,22 @@ export default function FindMedicineModal({ isOpen, onClose, onRequestSuccess })
             >
               {locatingUser ? <RefreshCw size={14} className="spin-icon" /> : <Crosshair size={14} />}
               <span>{locatingUser ? 'Detecting...' : 'My Live Location'}</span>
+            </button>
+
+            {/* Quick Bantwal Home Location Button */}
+            <button 
+              type="button"
+              className="btn-locate-me"
+              onClick={() => applyBantwalLocation()}
+              title="Center map directly on your home in Bantwal Taluk"
+              style={{
+                background: currentCenter?.label?.includes('Bantwal') ? 'rgba(6, 182, 212, 0.25)' : 'var(--bg-surface)',
+                borderColor: currentCenter?.label?.includes('Bantwal') ? 'var(--teal-500, #06b6d4)' : 'var(--border-subtle)',
+                color: currentCenter?.label?.includes('Bantwal') ? 'var(--teal-400, #06b6d4)' : 'var(--text-secondary)'
+              }}
+            >
+              <MapPin size={14} color="#06b6d4" />
+              <span>🏠 Bantwal Home</span>
             </button>
 
             {/* Medicine Selector */}
